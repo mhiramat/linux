@@ -62,7 +62,8 @@ BEGIN {
 	imm_flag["Lx"] = "INAT_MAKE_IMM(INAT_IMM_BYTE)"
 
 	modrm_expr = "^([CDEGMNPQRSUVW/][a-z]+|NTA|T[012])"
-	force64_expr = "\\([df]64\\)"
+	force64_expr = "\\(f64\\)"
+	def64_expr = "\\(d64\\)"
 	rex_expr = "^REX(\\.[XRWB]+)*"
 	fpu_expr = "^ESC" # TODO
 
@@ -303,9 +304,11 @@ function convert_operands(count,opnd,       i,j,imm,mod)
 			}
 			flags = add_flags(flags, "INAT_MAKE_GROUP(" group[opcode] ")")
 		}
-		# check force(or default) 64bit
+		# check force or default 64bit
 		if (match(ext, force64_expr))
 			flags = add_flags(flags, "INAT_FORCE64")
+		if (match(ext, def64_expr))
+			flags = add_flags(flags, "INAT_DEFAULT64")
 
 		# check REX prefix
 		if (match(opcode, rex_expr))
