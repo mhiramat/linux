@@ -82,6 +82,7 @@ struct insn {
 #define X86_REX_R(rex) ((rex) & 4)
 #define X86_REX_X(rex) ((rex) & 2)
 #define X86_REX_B(rex) ((rex) & 1)
+#define X86_REX_WRXB(rex) ((rex) & 0xf)
 
 #define X86_OPCODE_GPR(opcode) ((opcode) & 0x07)
 
@@ -160,6 +161,25 @@ static inline insn_byte_t insn_vex_p_bits(struct insn *insn)
 		return X86_VEX_P(insn->vex_prefix.bytes[1]);
 	else
 		return X86_VEX_P(insn->vex_prefix.bytes[2]);
+}
+
+static inline int insn_last_prefix_id(struct insn *insn)
+{
+	insn_attr_t attr = inat_get_opcode_attribute(insn_last_prefix(insn));
+	return inat_last_prefix_id(attr);
+}
+
+static inline insn_attr_t insn_has_segment_prefix(struct insn *insn)
+{
+	insn_attr_t attr;
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		attr = inat_get_opcode_attribute(insn->prefixes.bytes[i]);
+		if (inat_is_segment_prefix(attr))
+			return attr;
+	}
+	return 0;
 }
 
 /* Offset of each field from kaddr */
