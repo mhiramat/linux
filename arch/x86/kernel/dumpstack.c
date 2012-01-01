@@ -17,6 +17,7 @@
 #include <linux/sysfs.h>
 
 #include <asm/stacktrace.h>
+#include <asm/disasm.h>
 
 
 int panic_on_unrecovered_nmi;
@@ -288,6 +289,70 @@ int __kprobes __die(const char *str, struct pt_regs *regs, long err)
 	return 0;
 }
 
+#ifdef CONFIG_X86_DISASSEMBLER
+static void print_disasm_code(struct insn *insn, const char *buf)
+{
+	int i;
+
+	for (i = 0; i < insn->length; i++)
+		printk("%02x ", ((u8 *)insn->kaddr)[i]);
+	printk("%*s", (int)(3 * (9 - insn->length)), buf);
+}
+
+/* Disassemble between (ip - prologue) to (ip - prologue + length) */
+static int disassemble_code_dump(unsigned long ip, unsigned long prologue,
+				 unsigned long length)
+{
+	unsigned long offs, addr;
+	unsigned long saddr = ip - prologue;
+	unsigned long eaddr = ip - prologue + length;
+	struct insn insn;
+	char namebuf[KSYM_NAME_LEN] = {0};
+	char *modname;
+	int ret;
+
+	/* find which function has given ip */
+	if (!kernel_text_address(saddr) ||
+	    !kernel_text_address(eaddr) ||
+	    !kallsyms_lookup(ip, NULL, &offs, &modname, namebuf))
+		return -EINVAL;
+
+	addr = ip - offs;	/* Function start address */
+	kernel_insn_init(&insn, (void *)addr);
+	insn_get_length(&insn);
+	while (addr < saddr) {
+		kernel_insn_init(&insn, (void *)addr);
+		insn_get_length(&insn);
+		addr += insn.length;
+	}
+	saddr = addr;
+
+	if (modname)
+		printk("<%s+0x%lx [%s]>:\n", namebuf, addr - (ip - offs), modname);
+	else
+		printk("<%s+0x%lx>:\n", namebuf, addr - (ip - offs));
+
+	do {
+		ret = disassemble(&insn, namebuf, sizeof(namebuf) - 1);
+		if (ret < 0)
+			print_disasm_code(&insn, "(failed to disasm)");
+		else
+			print_disasm_code(&insn, namebuf);
+		kernel_insn_init(&insn, (void *)addr);
+		insn_get_length(&insn);
+		addr += insn.length;
+	} while (addr < eaddr);
+
+	return 0;
+}
+#else
+static int disassemble_code_dump(unsigned long ip, unsigned long prologue,
+				 unsigned long length)
+{
+	return -ENOTSUP;
+}
+#endif
+
 void __kprobes show_code_dump(struct pt_regs *regs)
 {
 	int i;
@@ -295,6 +360,10 @@ void __kprobes show_code_dump(struct pt_regs *regs)
 	unsigned int code_len = code_bytes;
 	unsigned char c;
 	u8 *ip;
+
+	/* try to disassemble code */
+	if (disassemble_code_dump(regs->ip, code_prologue, code_len) == 0)
+		return;
 
 	ip = (u8 *)regs->ip - code_prologue;
 	if (ip < (u8 *)PAGE_OFFSET || probe_kernel_address(ip, c)) {
