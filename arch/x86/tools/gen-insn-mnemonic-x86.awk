@@ -49,6 +49,7 @@ BEGIN {
 	regs_expr = "^[ABCDESR][0-9A-Z]"
 	vregs_expr = "^[re][0-9A-Z]"
 
+	only64_expr = "\\(o64\\)"
 	lprefix1_expr = "\\(66\\)"
 	lprefix2_expr = "\\(F3\\)"
 	lprefix3_expr = "\\(F2\\)"
@@ -254,6 +255,7 @@ function get_operand(opnd,	i,count,f8,opnds) {
 		ext = null
 		flags = null
 		opnd = null
+		pfx = ""
 		# parse one opcode
 		if (match($i, opnd_expr))
 			opnd = get_operand($(i++))
@@ -283,10 +285,15 @@ function get_operand(opnd,	i,count,f8,opnds) {
 			opcode = "call"
 		if (match(opcode, "^ret.*"))
 			opcode = "ret"
+
+		# additional flags
+		if (match(ext, only64_expr))
+			pfx = "%6:"
+
 		if (length(opnd) != 0)
-			flags = "\"" opcode " " opnd "\""
+			flags = "\"" pfx opcode " " opnd "\""
 		else
-			flags = "\"" opcode "\""
+			flags = "\"" pfx opcode "\""
 
 		if (length(flags) == 0)
 			continue
