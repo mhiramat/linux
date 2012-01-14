@@ -33,14 +33,16 @@
 static int verbose;
 static bool x86_64 = (sizeof(long) == 8);
 static bool att = true;
+static int lf_bytes = 7;
 
 static void usage(void)
 {
-	fprintf(stderr, "Usage: bogodis [-6|-3] [-v]\n");
+	fprintf(stderr, "Usage: bogodis [-6|-3] [-i|-a] [-l <NUM>] [-v]\n");
 	fprintf(stderr, "\t-6	64bit mode %s\n", (x86_64) ? "(default)" : "");
 	fprintf(stderr, "\t-3	32bit mode %s\n", (x86_64) ? "" : "(default)");
 	fprintf(stderr, "\t-i	Use Intel Syntax\n");
 	fprintf(stderr, "\t-a	Use AT&T Syntax\n");
+	fprintf(stderr, "\t-l <NUM>	Line feed with NUM bytes\n");
 	fprintf(stderr, "\t-v	Increment verbosity\n");
 	exit(1);
 }
@@ -49,7 +51,7 @@ static void parse_args(int argc, char *argv[])
 {
 	int c;
 
-	while ((c = getopt(argc, argv, "63iav")) != -1) {
+	while ((c = getopt(argc, argv, "63iavl:")) != -1) {
 		switch (c) {
 		case '6':
 			x86_64 = true;
@@ -66,9 +68,16 @@ static void parse_args(int argc, char *argv[])
 		case 'v':
 			verbose++;
 			break;
+		case 'l':
+			lf_bytes = atoi(optarg);
+			break;
 		default:
 			usage();
 		}
+	}
+	if (lf_bytes < 0 || lf_bytes > MAX_INSN_SIZE) {
+		fprintf(stderr, "Wrong Line feed bytes %d\n", lf_bytes);
+		usage();
 	}
 }
 
@@ -101,25 +110,41 @@ static void dump_insn(FILE *fp, struct insn *insn)
 		insn->length, insn->x86_64, insn->kaddr);
 }
 
-static int read_instruction(FILE *fp, insn_byte_t *insn_buf, size_t size)
+static int read_instruction(FILE *fp, insn_byte_t *insn_buf, size_t size, char **line)
 {
 	char *buf = NULL, *p;
 	size_t dummy;
-	int i;
+	int i, ret;
 
 	memset(insn_buf, 0, size);
 
-	if (getline(&buf, &dummy, fp) < 0)
-		return -errno;
-	p = buf;
+	if (getline(&buf, &dummy, fp) < 0) {
+		ret = -1;
+		goto out;
+	}
+
+	if (buf[0] == '<') {
+		ret = 0;
+		goto out;
+	}
+
+	p = strchr(buf, ':');
+	if (!p || p[1] == '\n') {
+		ret = 0;
+		goto out;
+	}
+	p++;
 	i = 0;
 	while (i < size) {
 		insn_buf[i++] = (insn_byte_t)strtoul(p, &p, 16);
 		if (*p == '\0' || *p == '\n' || !isspace(*p))
 			break;
 	}
-	free(buf);
+	*line = buf;
 	return i;
+out:
+	*line  = NULL;
+	return ret;
 }
 
 static int psnprintf(char **buf, size_t *len, const char *fmt, ...)
@@ -163,6 +188,7 @@ int snprint_assembly(char *buf, size_t len, struct insn *insn,
 		     unsigned long real_addr, int opts)
 {
 	int i = 0, ret;
+	unsigned char *fake_addr = (unsigned char *)insn->kaddr;
 
 	insn_get_length(insn);
 	if (!insn_complete(insn))
@@ -172,13 +198,12 @@ int snprint_assembly(char *buf, size_t len, struct insn *insn,
 		psnprintf(&buf, &len, "%lx: ", real_addr);
 
 	if (opts & DISASM_PR_RAW) {	/* print raw instruction */
-		for (i = 0; i < MAX_INSN_SIZE / 2 && i < insn->length; i++)
-			psnprintf(&buf, &len, "%02x ", insn->kaddr[i]);
-		if (i != MAX_INSN_SIZE / 2)
-			psnprintf(&buf, &len, "%*s",
-				3 * (MAX_INSN_SIZE / 2 - i), " ");
+		for (i = 0; i < lf_bytes && i < insn->length; i++)
+			psnprintf(&buf, &len, "%02x ", fake_addr[i]);
+		psnprintf(&buf, &len, "%*s", 3 * (8 - i), " ");
 	}
 
+	insn->kaddr = (void *)real_addr;
 	/* print assembly code */
 	if (opts & DISASM_PR_INTEL)
 		ret = disassemble(buf, len, insn, DISASM_SYNTAX_INTEL);
@@ -195,8 +220,8 @@ int snprint_assembly(char *buf, size_t len, struct insn *insn,
 		if (opts & DISASM_PR_ADDR) /* print real address */
 			psnprintf(&buf, &len, "%lx: ", real_addr + i);
 		for (; i < insn->length - 1; i++)
-			psnprintf(&buf, &len, "%02x ", insn->kaddr[i]);
-		psnprintf(&buf, &len, "%02x\n", insn->kaddr[i]);
+			psnprintf(&buf, &len, "%02x ", fake_addr[i]);
+		psnprintf(&buf, &len, "%02x\n", fake_addr[i]);
 	}
 	return 0;
 }
@@ -205,22 +230,34 @@ int main(int argc, char *argv[])
 {
 	insn_byte_t insn_buf[MAX_INSN_SIZE];
 	struct insn insn;
-	char buf[128];
+	char buf[128], *lbuf;
 	const char *grp;
+	unsigned long addr;
 	int ret;
 
 	parse_args(argc, argv);
 
-	while ((ret = read_instruction(stdin, insn_buf, MAX_INSN_SIZE)) > 0) {
+	while ((ret = read_instruction(stdin, insn_buf,
+				       MAX_INSN_SIZE, &lbuf)) >= 0) {
+		if (!lbuf)
+			continue;
+		if (lbuf[0] != '<')
+			addr = strtoul(lbuf, NULL, 16);
+		else
+			addr = 0;
+
 		insn_init(&insn, insn_buf, x86_64);
-		ret = snprint_assembly(buf, sizeof(buf), &insn, 0,
-			DISASM_PR_ALL | (att ? 0 : DISASM_PR_INTEL));
+		ret = snprint_assembly(buf, sizeof(buf), &insn, addr,
+			DISASM_PR_RAW | (att ? 0 : DISASM_PR_INTEL));
 		if (ret < 0) {
 			printf("Error: reason %s\n", strerror(-ret));
 			if (verbose)
 				dump_insn(stdout, &insn);
 		} else {
+			ret = strchr(lbuf, ':') - lbuf;
+			printf("%.*s:\t", ret, lbuf);
 			printf("%s", buf);
+			free(lbuf);
 			if (verbose >= 2) {
 				printf("format: %s\n",
 					get_mnemonic_format(&insn, &grp));
