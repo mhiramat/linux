@@ -92,6 +92,20 @@ Event Profiling
 the third is the number of probe miss-hits.
 
 
+Function disassembling
+----------------------
+ To find a probe target, you have two options.
+1) Use perf-probe in perftools. This allows you to find a probe target
+ by using source-code level information.
+2) Use a kernel function disassembling interface on debugfs.
+The first one is easy to use, very helpful for noraml user, but also
+requires kernel debuginfo package (or built binary with CONFIG_DEBUGINFO).
+The second one is easy to use, but requires a knowladge of assembly
+language (and also, this is currently available on x86 with
+CONFIG_X86_DISASSEMBLER=y and CONFIG_DEBUG_X86_DISASSEMBLY=y).
+The debugfs interface is /sys/kernel/debug/x86/disassembly. At first,
+you should write a function name to the file, and then, read it.
+
 Usage examples
 --------------
 To add a probe as a new event, write a new definition to kprobe_events
