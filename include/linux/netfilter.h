@@ -169,7 +169,7 @@ static inline bool nf_hooks_active(u_int8_t pf, unsigned int hook)
 {
 	if (__builtin_constant_p(pf) &&
 	    __builtin_constant_p(hook))
-		return static_branch(&nf_hooks_needed[pf][hook]);
+		return very_unlikely(&nf_hooks_needed[pf][hook]);
 
 	return !list_empty(&nf_hooks[pf][hook]);
 }

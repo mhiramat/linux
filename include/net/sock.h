@@ -930,7 +930,7 @@ static inline struct cg_proto *parent_cg_proto(struct proto *proto,
 {
 	return proto->proto_cgroup(parent_mem_cgroup(cg_proto->memcg));
 }
-#define mem_cgroup_sockets_enabled static_branch(&memcg_socket_limit_enabled)
+#define mem_cgroup_sockets_enabled very_unlikely(&memcg_socket_limit_enabled)
 #else
 #define mem_cgroup_sockets_enabled 0
 static inline struct cg_proto *parent_cg_proto(struct proto *proto,
