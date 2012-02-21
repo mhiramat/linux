@@ -213,8 +213,8 @@ retry:
  * Caller must lock kprobes by kprobe_mutex, or disable preemption
  * for preventing to release referencing kprobes.
  */
-static unsigned long recover_probed_instruction(kprobe_opcode_t *buf,
-						unsigned long addr)
+unsigned long recover_probed_instruction(kprobe_opcode_t *buf,
+					 unsigned long addr)
 {
 	struct kprobe *kp;
 	int i;
