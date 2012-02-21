@@ -250,7 +250,7 @@ static void __kvm_mmu_audit(struct kvm_vcpu *vcpu, int point)
 
 static inline void kvm_mmu_audit(struct kvm_vcpu *vcpu, int point)
 {
-	if (static_branch((&mmu_audit_key)))
+	if (very_unlikely((&mmu_audit_key)))
 		__kvm_mmu_audit(vcpu, point);
 }
 
