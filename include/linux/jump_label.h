@@ -221,8 +221,6 @@ jump_label_rate_limit(struct jump_label_key_deferred *key,
 
 #endif	/* HAVE_JUMP_LABEL */
 
-#define jump_label_key_enabled JUMP_LABEL_INIT_TRUE
-#define jump_label_key_disabled JUMP_LABEL_INIT_FALSE
 #define JUMP_LABEL_INIT JUMP_LABEL_INIT_FALSE
 #define jump_label_enabled jump_label_true
 

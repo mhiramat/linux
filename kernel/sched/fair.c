@@ -1403,7 +1403,7 @@ static struct jump_label_key __cfs_bandwidth_used;
 
 static inline bool cfs_bandwidth_used(void)
 {
-	return static_branch(&__cfs_bandwidth_used);
+	return very_unlikely(&__cfs_bandwidth_used);
 }
 
 void account_cfs_bandwidth_used(int enabled, int was_enabled)
