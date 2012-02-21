@@ -2896,6 +2896,10 @@ static void __init kdb_inittab(void)
 	  "Display per_cpu variables", 3, KDB_REPEAT_NONE);
 	kdb_register_repeat("grephelp", kdb_grep_help, "",
 	  "Display help on | grep", 0, KDB_REPEAT_NONE);
+#if defined(CONFIG_X86_DISASSEMBLER)
+	kdb_register_repeat("dis", kdb_dis, "<addr> [<len>]",
+	  "Display disassmbled code", 2, KDB_REPEAT_NONE);
+#endif
 }
 
 /* Execute any commands defined in kdb_cmds.  */
