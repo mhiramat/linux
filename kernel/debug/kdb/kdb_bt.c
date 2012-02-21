@@ -207,3 +207,85 @@ kdb_bt(int argc, const char **argv)
 	/* NOTREACHED */
 	return 0;
 }
+
+#if defined(CONFIG_X86_DISASSEMBLER)
+#include <linux/kallsyms.h>
+#include <asm/disasm.h>
+/* Find the instruction boundary address */
+static unsigned long find_boundary_address(unsigned long saddr,
+					   unsigned long *poffs,
+					   char **modname, char *namebuf)
+{
+	unsigned long offs, addr;
+	struct insn insn;
+
+	/* find which function has given ip */
+	if (!kallsyms_lookup(saddr, NULL, &offs, modname, namebuf))
+		return 0;
+
+	addr = saddr - offs;	/* Function start address */
+	while (addr < saddr) {
+		if (!kernel_text_address(addr))
+			return 0;	/* Out of range */
+		kernel_insn_init(&insn, (void *)addr);
+		insn_get_length(&insn);
+		addr += insn.length;
+	}
+	if (poffs)
+		*poffs = offs;
+	return addr;
+}
+
+static int kdb_show_disasm(unsigned long addr, size_t len)
+{
+	unsigned long offs, eaddr = addr + len;
+	struct insn insn;
+	char buf[KSYM_NAME_LEN] = {0};
+	char *modname;
+
+	addr = find_boundary_address(addr, &offs, &modname, buf);
+	if (!addr)
+		return KDB_BADADDR;
+
+	if (modname)
+		kdb_printf("<%s+0x%lx [%s]>:\n", buf, offs, modname);
+	else
+		kdb_printf("<%s+0x%lx>:\n", buf, offs);
+
+	do {
+		kernel_insn_init(&insn, (void *)addr);
+		snprint_assembly(buf, sizeof(buf), &insn, DISASM_PR_ALL);
+		kdb_printf("%s", buf);
+		addr += insn.length;
+	} while (addr < eaddr);
+
+	return 0;
+}
+
+int kdb_dis(int argc, const char **argv)
+{
+	char *cp;
+	int diag;
+	unsigned long addr;
+	long offset;
+	int nextarg;
+	size_t len;
+
+	if (argc > 3)
+		return KDB_ARGCOUNT;
+
+	nextarg = 1;
+	diag = kdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL);
+	if (diag)
+		return diag;
+
+	if (argc == 2) {
+		len = simple_strtol(argv[2], &cp, 0);
+		if (*cp)
+			return KDB_BADINT;
+	} else
+		len = 0;
+
+	return kdb_show_disasm(addr + offset, len);
+}
+#endif
