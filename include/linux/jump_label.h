@@ -72,6 +72,12 @@ struct module;
 #define JUMP_LABEL_INIT {ATOMIC_INIT(0), NULL}
 #endif
 
+static __always_inline bool very_unlikely(struct jump_label_key *key)
+{
+	return arch_static_branch(key);
+}
+
+/* Deprecated. Please use 'very_unlikely() instead. */
 static __always_inline bool static_branch(struct jump_label_key *key)
 {
 	return arch_static_branch(key);
@@ -114,6 +120,14 @@ struct jump_label_key_deferred {
 	struct jump_label_key  key;
 };
 
+static __always_inline bool very_unlikely(struct jump_label_key *key)
+{
+	if (unlikely(atomic_read(&key->enabled)))
+		return true;
+	return false;
+}
+
+/* Deprecated. Please use 'very_unlikely() instead. */
 static __always_inline bool static_branch(struct jump_label_key *key)
 {
 	if (unlikely(atomic_read(&key->enabled)))
