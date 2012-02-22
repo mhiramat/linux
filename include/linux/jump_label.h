@@ -9,10 +9,10 @@
  *
  * Jump labels provide an interface to generate dynamic branches using
  * self-modifying code. Assuming toolchain and architecture support the result
- * of a "if (static_branch(&key))" statement is a unconditional branch (which
+ * of a "if (very_unlikely(&key))" statement is a unconditional branch (which
  * defaults to false - and the true block is placed out of line).
  *
- * However at runtime we can change the 'static' branch target using
+ * However at runtime we can change the branch target using
  * jump_label_{inc,dec}(). These function as a 'reference' count on the key
  * object and for as long as there are references all branches referring to
  * that particular key will point to the (out of line) true block.
@@ -31,7 +31,21 @@
  *
  * Lacking toolchain and or architecture support, it falls back to a simple
  * conditional branch.
- */
+ *
+ * struct jump_label_key my_key = JUMP_LABEL_INIT_TRUE;
+ *
+ *   if (very_likely(&my_key)) {
+ *   }
+ *
+ * will result in the true case being in-line and starts the key with a single
+ * reference. Mixing very_likely() and very_unlikely() on the same key is not
+ * allowed.
+ *
+ * Not initializing the key (static data is initialized to 0s anyway) is the
+ * same as using JUMP_LABEL_INIT_FALSE and very_unlikely() is
+ * equivalent with static_branch().
+ *
+*/
 
 #include <linux/types.h>
 #include <linux/compiler.h>
@@ -41,6 +55,7 @@
 
 struct jump_label_key {
 	atomic_t enabled;
+/* Set lsb bit to 1 if branch is default true, 0 ot */
 	struct jump_entry *entries;
 #ifdef CONFIG_MODULES
 	struct jump_label_mod *next;
@@ -66,12 +81,33 @@ struct module;
 
 #ifdef HAVE_JUMP_LABEL
 
-#ifdef CONFIG_MODULES
-#define JUMP_LABEL_INIT {ATOMIC_INIT(0), NULL, NULL}
-#else
-#define JUMP_LABEL_INIT {ATOMIC_INIT(0), NULL}
-#endif
+#define JUMP_LABEL_TRUE_BRANCH 1UL
 
+static
+inline struct jump_entry *jump_label_get_entries(struct jump_label_key *key)
+{
+	return (struct jump_entry *)((unsigned long)key->entries
+						& ~JUMP_LABEL_TRUE_BRANCH);
+}
+
+static inline bool jump_label_get_branch_default(struct jump_label_key *key)
+{
+	if ((unsigned long)key->entries & JUMP_LABEL_TRUE_BRANCH)
+		return true;
+	return false;
+}
+
+static __always_inline bool very_unlikely(struct jump_label_key *key)
+{
+	return arch_static_branch(key);
+}
+
+static __always_inline bool very_likely(struct jump_label_key *key)
+{
+	return !very_unlikely(key);
+}
+
+/* Deprecated. Please use 'very_unlikely() instead. */
 static __always_inline bool static_branch(struct jump_label_key *key)
 {
 	return arch_static_branch(key);
@@ -91,16 +127,19 @@ extern int jump_label_text_reserved(void *start, void *end);
 extern void jump_label_inc(struct jump_label_key *key);
 extern void jump_label_dec(struct jump_label_key *key);
 extern void jump_label_dec_deferred(struct jump_label_key_deferred *key);
-extern bool jump_label_enabled(struct jump_label_key *key);
+extern bool jump_label_true(struct jump_label_key *key);
 extern void jump_label_apply_nops(struct module *mod);
-extern void jump_label_rate_limit(struct jump_label_key_deferred *key,
-		unsigned long rl);
+extern void
+jump_label_rate_limit(struct jump_label_key_deferred *key, unsigned long rl);
+
+#define JUMP_LABEL_INIT_TRUE ((struct jump_label_key) \
+	{ .enabled = ATOMIC_INIT(1), .entries = (void *)1 })
+#define JUMP_LABEL_INIT_FALSE ((struct jump_label_key) \
+	{ .enabled = ATOMIC_INIT(0), .entries = (void *)0 })
 
 #else  /* !HAVE_JUMP_LABEL */
 
 #include <linux/atomic.h>
-
-#define JUMP_LABEL_INIT {ATOMIC_INIT(0)}
 
 struct jump_label_key {
 	atomic_t enabled;
@@ -114,9 +153,24 @@ struct jump_label_key_deferred {
 	struct jump_label_key  key;
 };
 
+static __always_inline bool very_unlikely(struct jump_label_key *key)
+{
+	if (unlikely(atomic_read(&key->enabled)) > 0)
+		return true;
+	return false;
+}
+
+static __always_inline bool very_likely(struct jump_label_key *key)
+{
+	if (likely(atomic_read(&key->enabled)) > 0)
+		return true;
+	return false;
+}
+
+/* Deprecated. Please use 'very_unlikely() instead. */
 static __always_inline bool static_branch(struct jump_label_key *key)
 {
-	if (unlikely(atomic_read(&key->enabled)))
+	if (unlikely(atomic_read(&key->enabled)) > 0)
 		return true;
 	return false;
 }
@@ -144,9 +198,9 @@ static inline int jump_label_text_reserved(void *start, void *end)
 static inline void jump_label_lock(void) {}
 static inline void jump_label_unlock(void) {}
 
-static inline bool jump_label_enabled(struct jump_label_key *key)
+static inline bool jump_label_true(struct jump_label_key *key)
 {
-	return !!atomic_read(&key->enabled);
+	return (atomic_read(&key->enabled) > 0);
 }
 
 static inline int jump_label_apply_nops(struct module *mod)
@@ -154,13 +208,20 @@ static inline int jump_label_apply_nops(struct module *mod)
 	return 0;
 }
 
-static inline void jump_label_rate_limit(struct jump_label_key_deferred *key,
+static inline void
+jump_label_rate_limit(struct jump_label_key_deferred *key,
 		unsigned long rl)
 {
 }
+
+#define JUMP_LABEL_INIT_TRUE ((struct jump_label_key) \
+		{ .enabled = ATOMIC_INIT(1) })
+#define JUMP_LABEL_INIT_FALSE ((struct jump_label_key) \
+		{ .enabled = ATOMIC_INIT(0) })
+
 #endif	/* HAVE_JUMP_LABEL */
 
-#define jump_label_key_enabled	((struct jump_label_key){ .enabled = ATOMIC_INIT(1), })
-#define jump_label_key_disabled	((struct jump_label_key){ .enabled = ATOMIC_INIT(0), })
+#define JUMP_LABEL_INIT JUMP_LABEL_INIT_FALSE
+#define jump_label_enabled jump_label_true
 
 #endif	/* _LINUX_JUMP_LABEL_H */

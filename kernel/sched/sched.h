@@ -631,12 +631,12 @@ enum {
 #if defined(CONFIG_SCHED_DEBUG) && defined(HAVE_JUMP_LABEL)
 static __always_inline bool static_branch__true(struct jump_label_key *key)
 {
-	return likely(static_branch(key)); /* Not out of line branch. */
+	return very_likely(key); /* Not out of line branch. */
 }
 
 static __always_inline bool static_branch__false(struct jump_label_key *key)
 {
-	return unlikely(static_branch(key)); /* Out of line branch. */
+	return very_unlikely(key); /* Out of line branch. */
 }
 
 #define SCHED_FEAT(name, enabled)					\

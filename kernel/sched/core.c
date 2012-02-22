@@ -162,8 +162,8 @@ static int sched_feat_show(struct seq_file *m, void *v)
 
 #ifdef HAVE_JUMP_LABEL
 
-#define jump_label_key__true  jump_label_key_enabled
-#define jump_label_key__false jump_label_key_disabled
+#define jump_label_key__true  JUMP_LABEL_INIT_TRUE
+#define jump_label_key__false JUMP_LABEL_INIT_FALSE
 
 #define SCHED_FEAT(name, enabled)	\
 	jump_label_key__##enabled ,
@@ -176,13 +176,13 @@ struct jump_label_key sched_feat_keys[__SCHED_FEAT_NR] = {
 
 static void sched_feat_disable(int i)
 {
-	if (jump_label_enabled(&sched_feat_keys[i]))
+	if (jump_label_true(&sched_feat_keys[i]))
 		jump_label_dec(&sched_feat_keys[i]);
 }
 
 static void sched_feat_enable(int i)
 {
-	if (!jump_label_enabled(&sched_feat_keys[i]))
+	if (!jump_label_true(&sched_feat_keys[i]))
 		jump_label_inc(&sched_feat_keys[i]);
 }
 #else
@@ -894,7 +894,7 @@ static void update_rq_clock_task(struct rq *rq, s64 delta)
 	delta -= irq_delta;
 #endif
 #ifdef CONFIG_PARAVIRT_TIME_ACCOUNTING
-	if (static_branch((&paravirt_steal_rq_enabled))) {
+	if (very_unlikely((&paravirt_steal_rq_enabled))) {
 		u64 st;
 
 		steal = paravirt_steal_clock(cpu_of(rq));
@@ -2756,7 +2756,7 @@ void account_idle_time(cputime_t cputime)
 static __always_inline bool steal_account_process_tick(void)
 {
 #ifdef CONFIG_PARAVIRT
-	if (static_branch(&paravirt_steal_enabled)) {
+	if (very_unlikely(&paravirt_steal_enabled)) {
 		u64 steal, st = 0;
 
 		steal = paravirt_steal_clock(smp_processor_id());
