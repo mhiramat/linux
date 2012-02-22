@@ -234,7 +234,7 @@ static void audit_vcpu_spte(struct kvm_vcpu *vcpu)
 }
 
 static bool mmu_audit;
-static struct jump_label_key mmu_audit_key;
+static struct static_key mmu_audit_key;
 
 static void __kvm_mmu_audit(struct kvm_vcpu *vcpu, int point)
 {
@@ -259,7 +259,7 @@ static void mmu_audit_enable(void)
 	if (mmu_audit)
 		return;
 
-	jump_label_inc(&mmu_audit_key);
+	static_key_slow_inc(&mmu_audit_key);
 	mmu_audit = true;
 }
 
@@ -268,7 +268,7 @@ static void mmu_audit_disable(void)
 	if (!mmu_audit)
 		return;
 
-	jump_label_dec(&mmu_audit_key);
+	static_key_slow_dec(&mmu_audit_key);
 	mmu_audit = false;
 }
 

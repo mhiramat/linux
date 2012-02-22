@@ -32,7 +32,7 @@ the branch site to change the branch direction.
 
 For example, if we have a simple branch that is disabled by default:
 
-	if (very_unlikely(&jump_key))
+	if (very_unlikely(&key))
 		printk("I am the true branch\n");
 
 Thus, by default the 'printk' will not be emitted. And the code generated will
@@ -48,58 +48,58 @@ basically 'free'. That is the basic tradeoff of this optimization.
 
 In order to use a jump label you much first define a key:
 
-	struct jump_label_key jump_key;
+	struct static_key key;
 
 Which is initialized as:
 
-	struct jump_label_key jump_key = JUMP_LABEL_INIT_TRUE;
+	struct static_key key = STATIC_KEY_INIT_TRUE;
 
 or:
 
-	struct jump_label_Key jump_key = JUMP_LABEL_INIT_FALSE;
+	struct static_key key = STATIC_KEY_INIT_FALSE;
 
 If the key is not initialized, it is default false. The
-'struct jump_label_key', must be a 'global'. That is, it can't be allocated on
+'struct static_key', must be a 'global'. That is, it can't be allocated on
 the stack or dynamically allocated at run-time.
 
 The key is then used in code as:
 
-        if (very_unlikely(&jump_key))
+        if (very_unlikely(&key))
                 do unlikely code
         else
                 do likely code
 
 Or:
 
-        if (very_likely(&jump_key))
+        if (very_likely(&key))
                 do likely code
         else
                 do unlikely code
 
-A key that is initialized via 'JUMP_LABEL_INIT_FALSE', must be used in a
+A key that is initialized via 'STATIC_KEY_INIT_FALSE', must be used in a
 'very_unlikely()' construct. Likewise, a key initialized via
-'JUMP_LABEL_INIT_TRUE' must be used in a 'very_likely()' construct.
+'STATIC_KEY_INIT_TRUE' must be used in a 'very_likely()' construct.
 A single key can be used in many branches, but all the branches must match
 the way that the key has been initialized.
 
 The branch(es) can then be switched via:
 
-            jump_label_inc(&jump_key);
-            jump_label_dec(&jump_key);
+            static_key_slow_inc(&key);
+            static_key_slow_dec(&key);
 
-Thus, 'jump_label_inc()' means 'make the branch true', and
-'jump_label_dec()' means 'make the the branch false' with appropriate reference
-counting. For example, if the key is initialized true, a jump_label_dec(), will
-switch the branch to false. And a subsequent jump_label_inc(), will change
+Thus, 'static_key_slow_inc()' means 'make the branch true', and
+'static_key_slow_dec()' means 'make the the branch false' with appropriate reference
+counting. For example, if the key is initialized true, a static_key_slow_dec(), will
+switch the branch to false. And a subsequent static_key_slow_inc(), will change
 the branch back to true. Likewise, if the key is initialized false, a
-'jump_label_inc()', will change the branch to true. And then a
-'jump_label_dec()', will again make the branch false.
+'static_key_slow_inc()', will change the branch to true. And then a
+'static_key_slow_dec()', will again make the branch false.
 
 An example usage in the kernel is the implementation of tracepoints:
 
         static inline void trace_##name(proto)                          \
         {                                                               \
-                if (very_unlikely(&__tracepoint_##name.key))  		\
+                if (very_unlikely(&__tracepoint_##name.key))		\
                         __DO_TRACE(&__tracepoint_##name,                \
                                 TP_PROTO(data_proto),                   \
                                 TP_ARGS(data_args),                     \
@@ -122,7 +122,7 @@ simply fall back to a traditional, load, test, and jump sequence.
 
 * #define JUMP_LABEL_NOP_SIZE, see: arch/x86/include/asm/jump_label.h
 
-* __always_inline bool arch_static_branch(struct jump_label_key *key), see:
+* __always_inline bool arch_static_branch(struct static_key *key), see:
 					arch/x86/include/asm/jump_label.h
 
 * void arch_jump_label_transform(struct jump_entry *entry, enum jump_label_type type),
