@@ -403,7 +403,7 @@ static __kprobes void free_aggr_kprobe(struct kprobe *p)
 }
 
 /* Return true(!0) if the kprobe is ready for optimization. */
-static inline int kprobe_optready(struct kprobe *p)
+int kprobe_optready(struct kprobe *p)
 {
 	struct optimized_kprobe *op;
 

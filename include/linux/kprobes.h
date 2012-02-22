@@ -293,6 +293,12 @@ extern int proc_kprobes_optimization_handler(struct ctl_table *table,
 					     size_t *length, loff_t *ppos);
 #endif
 
+extern int kprobe_optready(struct kprobe *p);
+#else /* CONFIG_OPTPROBES */
+static inline int kprobe_optready(struct kprobe *p)
+{
+	return 0;
+}
 #endif /* CONFIG_OPTPROBES */
 
 /* Get the kprobe at this addr (if any) - called with preemption disabled */
