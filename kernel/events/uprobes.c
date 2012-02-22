@@ -15,10 +15,11 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
- * Copyright (C) IBM Corporation, 2008-2011
+ * Copyright (C) IBM Corporation, 2008-2012
  * Authors:
  *	Srikar Dronamraju
  *	Jim Keniston
+ * Copyright (C) 2011-2012 Red Hat, Inc., Peter Zijlstra <pzijlstr@redhat.com>
  */
 
 #include <linux/kernel.h>
@@ -63,6 +64,18 @@ struct vma_info {
 	struct list_head	probe_list;
 	struct mm_struct	*mm;
 	loff_t			vaddr;
+};
+
+struct uprobe {
+	struct rb_node		rb_node;	/* node in the rb tree */
+	atomic_t		ref;
+	struct rw_semaphore	consumer_rwsem;
+	struct list_head	pending_list;
+	struct uprobe_consumer	*consumers;
+	struct inode		*inode;		/* Also hold a ref to inode */
+	loff_t			offset;
+	int			flags;
+	struct arch_uprobe	arch;
 };
 
 /*
@@ -180,7 +193,7 @@ bool __weak is_bkpt_insn(uprobe_opcode_t *insn)
 /*
  * write_opcode - write the opcode at a given virtual address.
  * @mm: the probed process address space.
- * @uprobe: the breakpointing information.
+ * @arch_uprobe: the breakpointing information.
  * @vaddr: the virtual address to store the opcode.
  * @opcode: opcode to be written at @vaddr.
  *
@@ -190,13 +203,14 @@ bool __weak is_bkpt_insn(uprobe_opcode_t *insn)
  * For mm @mm, write the opcode at @vaddr.
  * Return 0 (success) or a negative errno.
  */
-static int write_opcode(struct mm_struct *mm, struct uprobe *uprobe,
+static int write_opcode(struct mm_struct *mm, struct arch_uprobe *auprobe,
 			unsigned long vaddr, uprobe_opcode_t opcode)
 {
 	struct page *old_page, *new_page;
 	struct address_space *mapping;
 	void *vaddr_old, *vaddr_new;
 	struct vm_area_struct *vma;
+	struct uprobe *uprobe;
 	loff_t addr;
 	int ret;
 
@@ -216,6 +230,7 @@ static int write_opcode(struct mm_struct *mm, struct uprobe *uprobe,
 	if (!valid_vma(vma, is_bkpt_insn(&opcode)))
 		goto put_out;
 
+	uprobe = container_of(auprobe, struct uprobe, arch);
 	mapping = uprobe->inode->i_mapping;
 	if (mapping != vma->vm_file->f_mapping)
 		goto put_out;
@@ -244,8 +259,8 @@ static int write_opcode(struct mm_struct *mm, struct uprobe *uprobe,
 
 	/* poke the new insn in, ASSUMES we don't cross page boundary */
 	vaddr &= ~PAGE_MASK;
-	BUG_ON(vaddr + uprobe_opcode_sz > PAGE_SIZE);
-	memcpy(vaddr_new + vaddr, &opcode, uprobe_opcode_sz);
+	BUG_ON(vaddr + UPROBES_BKPT_INSN_SIZE > PAGE_SIZE);
+	memcpy(vaddr_new + vaddr, &opcode, UPROBES_BKPT_INSN_SIZE);
 
 	kunmap_atomic(vaddr_new);
 	kunmap_atomic(vaddr_old);
@@ -293,7 +308,7 @@ static int read_opcode(struct mm_struct *mm, unsigned long vaddr, uprobe_opcode_
 	lock_page(page);
 	vaddr_new = kmap_atomic(page);
 	vaddr &= ~PAGE_MASK;
-	memcpy(opcode, vaddr_new + vaddr, uprobe_opcode_sz);
+	memcpy(opcode, vaddr_new + vaddr, UPROBES_BKPT_INSN_SIZE);
 	kunmap_atomic(vaddr_new);
 	unlock_page(page);
 
@@ -326,7 +341,7 @@ static int is_bkpt_at_addr(struct mm_struct *mm, unsigned long vaddr)
  * For mm @mm, store the breakpoint instruction at @vaddr.
  * Return 0 (success) or a negative errno.
  */
-int __weak set_bkpt(struct mm_struct *mm, struct uprobe *uprobe, unsigned long vaddr)
+int __weak set_bkpt(struct mm_struct *mm, struct arch_uprobe *auprobe, unsigned long vaddr)
 {
 	int result;
 
@@ -337,7 +352,7 @@ int __weak set_bkpt(struct mm_struct *mm, struct uprobe *uprobe, unsigned long v
 	if (result)
 		return result;
 
-	return write_opcode(mm, uprobe, vaddr, UPROBES_BKPT_INSN);
+	return write_opcode(mm, auprobe, vaddr, UPROBES_BKPT_INSN);
 }
 
 /**
@@ -351,7 +366,7 @@ int __weak set_bkpt(struct mm_struct *mm, struct uprobe *uprobe, unsigned long v
  * Return 0 (success) or a negative errno.
  */
 int __weak
-set_orig_insn(struct mm_struct *mm, struct uprobe *uprobe, unsigned long vaddr, bool verify)
+set_orig_insn(struct mm_struct *mm, struct arch_uprobe *auprobe, unsigned long vaddr, bool verify)
 {
 	if (verify) {
 		int result;
@@ -363,7 +378,7 @@ set_orig_insn(struct mm_struct *mm, struct uprobe *uprobe, unsigned long vaddr, 
 		if (result != 1)
 			return result;
 	}
-	return write_opcode(mm, uprobe, vaddr, *(uprobe_opcode_t *)uprobe->insn);
+	return write_opcode(mm, auprobe, vaddr, *(uprobe_opcode_t *)auprobe->insn);
 }
 
 static int match_uprobe(struct uprobe *l, struct uprobe *r)
@@ -593,13 +608,13 @@ static int copy_insn(struct uprobe *uprobe, struct vm_area_struct *vma, unsigned
 
 	/* Instruction at the page-boundary; copy bytes in second page */
 	if (nbytes < bytes) {
-		if (__copy_insn(mapping, vma, uprobe->insn + nbytes,
+		if (__copy_insn(mapping, vma, uprobe->arch.insn + nbytes,
 				bytes - nbytes, uprobe->offset + nbytes))
 			return -ENOMEM;
 
 		bytes = nbytes;
 	}
-	return __copy_insn(mapping, vma, uprobe->insn, bytes, uprobe->offset);
+	return __copy_insn(mapping, vma, uprobe->arch.insn, bytes, uprobe->offset);
 }
 
 static int install_breakpoint(struct mm_struct *mm, struct uprobe *uprobe,
@@ -625,23 +640,23 @@ static int install_breakpoint(struct mm_struct *mm, struct uprobe *uprobe,
 		if (ret)
 			return ret;
 
-		if (is_bkpt_insn((uprobe_opcode_t *)uprobe->insn))
+		if (is_bkpt_insn((uprobe_opcode_t *)uprobe->arch.insn))
 			return -EEXIST;
 
-		ret = arch_uprobes_analyze_insn(mm, uprobe);
+		ret = arch_uprobes_analyze_insn(mm, &uprobe->arch);
 		if (ret)
 			return ret;
 
 		uprobe->flags |= UPROBES_COPY_INSN;
 	}
-	ret = set_bkpt(mm, uprobe, addr);
+	ret = set_bkpt(mm, &uprobe->arch, addr);
 
 	return ret;
 }
 
 static void remove_breakpoint(struct mm_struct *mm, struct uprobe *uprobe, loff_t vaddr)
 {
-	set_orig_insn(mm, uprobe, (unsigned long)vaddr, true);
+	set_orig_insn(mm, &uprobe->arch, (unsigned long)vaddr, true);
 }
 
 static void delete_uprobe(struct uprobe *uprobe)
