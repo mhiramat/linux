@@ -50,6 +50,7 @@
 #include <linux/kdebug.h>
 #include <linux/kallsyms.h>
 #include <linux/ftrace.h>
+#include <linux/kgdb.h>
 
 #include <asm/cacheflush.h>
 #include <asm/desc.h>
@@ -217,6 +218,13 @@ static unsigned long recover_probed_instruction(kprobe_opcode_t *buf,
 {
 	struct kprobe *kp;
 	int i;
+
+	/* Recover if kgdb has put a breakpoint */
+	if (kgdb_get_saved_instr(addr, buf)) {
+		memcpy(buf + BREAK_INSTR_SIZE, addr + BREAK_INSTR_SIZE,
+			(MAX_INSN_SIZE - BREAK_INSTR_SIZE) * sizeof(kprobe_opcode_t));
+		return (unsigned long)buf;
+	}
 
 	for (i = 0; i < RELATIVEJUMP_SIZE; i++) {
 		kp = get_kprobe((void *)addr - i);
