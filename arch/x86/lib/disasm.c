@@ -7,7 +7,9 @@
 #include <linux/string.h>
 #include <linux/ctype.h>
 #include <linux/errno.h>
+#ifdef __KERNEL__
 #include <linux/kallsyms.h>
+#endif
 
 #include <asm/disasm.h>
 
@@ -30,6 +32,7 @@ static int psnprintf(char **buf, size_t *len, const char *fmt, ...)
 	return ret;
 }
 
+#ifdef __KERNEL__
 /* Print address with symbol */
 static int psnprint_symbol(char **buf, size_t *len, unsigned long addr)
 {
@@ -50,6 +53,12 @@ static int psnprint_symbol(char **buf, size_t *len, unsigned long addr)
 
 	return psnprintf(buf, len, ">");
 }
+#else
+static int psnprint_symbol(char **buf, size_t *len, unsigned long addr)
+{
+	return psnprintf(buf, len, "%lx", addr);
+}
+#endif
 
 /* Operand classifiers */
 static bool operand_is_register(const char *p)
