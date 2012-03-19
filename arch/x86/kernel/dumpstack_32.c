@@ -84,8 +84,6 @@ show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 
 void show_registers(struct pt_regs *regs)
 {
-	int i;
-
 	print_modules();
 	__show_regs(regs, !user_mode_vm(regs));
 
@@ -97,33 +95,11 @@ void show_registers(struct pt_regs *regs)
 	 * time of the fault..
 	 */
 	if (!user_mode_vm(regs)) {
-		unsigned int code_prologue = code_bytes * 43 / 64;
-		unsigned int code_len = code_bytes;
-		unsigned char c;
-		u8 *ip;
-
 		printk(KERN_EMERG "Stack:\n");
 		show_stack_log_lvl(NULL, regs, &regs->sp, 0, KERN_EMERG);
 
 		printk(KERN_EMERG "Code: ");
-
-		ip = (u8 *)regs->ip - code_prologue;
-		if (ip < (u8 *)PAGE_OFFSET || probe_kernel_address(ip, c)) {
-			/* try starting at IP */
-			ip = (u8 *)regs->ip;
-			code_len = code_len - code_prologue + 1;
-		}
-		for (i = 0; i < code_len; i++, ip++) {
-			if (ip < (u8 *)PAGE_OFFSET ||
-					probe_kernel_address(ip, c)) {
-				printk(KERN_CONT " Bad EIP value.");
-				break;
-			}
-			if (ip == (u8 *)regs->ip)
-				printk(KERN_CONT "<%02x> ", c);
-			else
-				printk(KERN_CONT "%02x ", c);
-		}
+		show_code_dump(regs);
 	}
 	printk(KERN_CONT "\n");
 }
