@@ -182,6 +182,7 @@ typedef struct _kdbtab {
 } kdbtab_t;
 
 extern int kdb_bt(int, const char **);	/* KDB display back trace */
+extern int kdb_dis(int, const char **);	/* KDB display disassemble */
 
 /* KDB breakpoint management functions */
 extern void kdb_initbptab(void);
