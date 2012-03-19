@@ -1237,7 +1237,7 @@ static int __kprobes in_kprobes_functions(unsigned long addr)
 
 	if (addr >= (unsigned long)__kprobes_text_start &&
 	    addr < (unsigned long)__kprobes_text_end)
-		return -EINVAL;
+		goto kprobetext;
 	/*
 	 * If there exists a kprobe_blacklist, verify and
 	 * fail any probe registration in the prohibited area
@@ -1246,10 +1246,19 @@ static int __kprobes in_kprobes_functions(unsigned long addr)
 		if (kb->start_addr) {
 			if (addr >= kb->start_addr &&
 			    addr < (kb->start_addr + kb->range))
-				return -EINVAL;
+				goto kprobetext;
 		}
 	}
+
 	return 0;
+
+kprobetext:
+#ifdef CONFIG_DEBUG_PROBE_KPROBES
+	printk(KERN_WARNING "Warning: probe a __kprobes function: %lx\n", addr);
+	return 0;
+#else
+	return -EINVAL;
+#endif
 }
 
 /*
