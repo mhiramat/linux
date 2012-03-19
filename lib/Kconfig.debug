@@ -1298,6 +1298,15 @@ config ASYNC_RAID6_TEST
 
 	  If unsure, say N.
 
+config DEBUG_PROBE_KPROBES
+	bool "Allow probe on __kprobes function for debugging kprobes"
+	depends on DEBUG_KERNEL && KPROBES
+	help
+	  This allows you to put a probe on __kprobes marked functions.
+	  This option is only for debugging kprobes.
+
+	  If you are not kprobes developer, say N.
+
 source "samples/Kconfig"
 
 source "lib/Kconfig.kgdb"
