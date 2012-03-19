@@ -7,6 +7,8 @@
 #include <linux/string.h>
 #include <linux/ctype.h>
 #include <linux/errno.h>
+#include <linux/kallsyms.h>
+
 #include <asm/disasm.h>
 
 #define X86_LEA_OPCODE 0x8d
@@ -26,6 +28,27 @@ static int psnprintf(char **buf, size_t *len, const char *fmt, ...)
 		ret = -E2BIG;
 
 	return ret;
+}
+
+/* Print address with symbol */
+static int psnprint_symbol(char **buf, size_t *len, unsigned long addr)
+{
+	unsigned long offs;
+	char func[KSYM_NAME_LEN];
+	char *modname;
+	int ret;
+
+	ret = psnprintf(buf, len, "%lx", addr);
+	if (!kallsyms_lookup(addr, NULL, &offs, &modname, func))
+		return ret;
+
+	psnprintf(buf, len, " <%s", func);
+	if (offs)
+		psnprintf(buf, len, "+0x%lx", offs);
+	if (modname)
+		psnprintf(buf, len, " [%s]", modname);
+
+	return psnprintf(buf, len, ">");
 }
 
 /* Operand classifiers */
@@ -385,7 +408,7 @@ static int disasm_immediate(char **buf, size_t *len, const char *opnd,
 	if (opnd[0] == 'J' || opnd[0] == 'A') {
 		if (opnd[0] == 'J') /* Relative from IP */
 			imm += (long)insn->kaddr + insn->length;
-		return psnprintf(buf, len, "%lx", (unsigned long)imm);
+		return psnprint_symbol(buf, len, (unsigned long)imm);
 	}
 
 	size = insn->opnd_bytes;
