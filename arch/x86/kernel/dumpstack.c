@@ -292,6 +292,37 @@ int __kprobes __die(const char *str, struct pt_regs *regs, long err)
 	return 0;
 }
 
+void __kprobes show_code_dump(struct pt_regs *regs)
+{
+	int i;
+	unsigned int code_prologue = code_bytes * 43 / 64;
+	unsigned int code_len = code_bytes;
+	unsigned char c;
+	u8 *ip;
+
+	ip = (u8 *)regs->ip - code_prologue;
+	if (ip < (u8 *)PAGE_OFFSET || probe_kernel_address(ip, c)) {
+		/* try starting at IP */
+		ip = (u8 *)regs->ip;
+		code_len = code_len - code_prologue + 1;
+	}
+	for (i = 0; i < code_len; i++, ip++) {
+		if (ip < (u8 *)PAGE_OFFSET ||
+				probe_kernel_address(ip, c)) {
+#ifdef CONFIG_X86_32
+			printk(KERN_CONT " Bad EIP value.");
+#else
+			printk(KERN_CONT " Bad RIP value.");
+#endif
+			break;
+		}
+		if (ip == (u8 *)regs->ip)
+			printk(KERN_CONT "<%02x> ", c);
+		else
+			printk(KERN_CONT "%02x ", c);
+	}
+}
+
 /*
  * This is gone through when something in the kernel has done something bad
  * and is about to be terminated:
