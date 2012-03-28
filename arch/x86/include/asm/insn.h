@@ -83,6 +83,8 @@ struct insn {
 #define X86_REX_X(rex) ((rex) & 2)
 #define X86_REX_B(rex) ((rex) & 1)
 
+#define X86_OPCODE_GPR(opcode) ((opcode) & 0x07)
+
 /* VEX bit flags  */
 #define X86_VEX_W(vex)	((vex) & 0x80)	/* VEX3 Byte2 */
 #define X86_VEX_R(vex)	((vex) & 0x80)	/* VEX2/3 Byte1 */
