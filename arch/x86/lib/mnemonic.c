@@ -1,9 +1,28 @@
 #include <linux/kernel.h>
+#include <linux/string.h>
 #include <asm/insn.h>
 #include <asm/disasm.h>
 
 /* Define mnemonic lookup table */
 #include "mnemonic-tables.c"
+
+static const char *get_variant(const char *fmt, struct insn *insn)
+{
+	const char *p;
+
+	if (!fmt)
+		goto out;
+
+	if (insn->x86_64) {
+		p = strstr(fmt, "%6");
+		if (!p)
+			goto out;
+		fmt = strchr(p, ':') + 1;
+	} else if (strstr(fmt, "%6") == fmt)
+		fmt = NULL;
+out:
+	return fmt;
+}
 
 const char *get_mnemonic_format(struct insn *insn, const char **grp)
 {
@@ -39,7 +58,7 @@ const char *get_mnemonic_format(struct insn *insn, const char **grp)
 				table = mnemonic_escape_tables[n][0];
 		}
 		if (table)
-			ret = table[idx];
+			ret = get_variant(table[idx], insn);
 
 		/* Solve groups */
 		if (grp && inat_is_group(attr)) {
@@ -51,7 +70,7 @@ const char *get_mnemonic_format(struct insn *insn, const char **grp)
 			else
 				table = mnemonic_group_tables[n][0];
 			idx = X86_MODRM_REG(idx);
-			*grp = table[idx];
+			*grp = get_variant(table[idx], insn);
 		}
 	}
 	return ret;
