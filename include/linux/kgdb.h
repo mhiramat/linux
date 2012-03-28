@@ -209,6 +209,7 @@ extern void kgdb_arch_set_pc(struct pt_regs *regs, unsigned long pc);
 extern int kgdb_validate_break_address(unsigned long addr);
 extern int kgdb_arch_set_breakpoint(unsigned long addr, char *saved_instr);
 extern int kgdb_arch_remove_breakpoint(unsigned long addr, char *bundle);
+extern int kgdb_get_saved_instr(unsigned long addr, unsigned char *buf);
 
 /**
  *	kgdb_arch_late - Perform any architecture specific initalization.
