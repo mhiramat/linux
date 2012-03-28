@@ -497,3 +497,54 @@ int disassemble(char *buf, size_t len, struct insn *insn)
 
 	return ret < 0 ? ret : orig_len - len;
 }
+
+/**
+ * snprint_assembly() - Disassemble given instruction with headers
+ * @buf:	A buffer in which assembly code is stored
+ * @len:	The size of @buf
+ * @insn:	An instruction which will be disassembled
+ * @opts:	Options
+ *
+ * This disassembles given instruction and put it into buffer with
+ * some optional information. Available option flagss are;
+ * DISASM_PR_ADDR: the address of given instruction is added.
+ * DISASM_PR_RAW:  the raw bytes of given instruction are added.
+ * Caller must initialize @insn but don't need to decode (ex insn_get_length).
+ */
+int snprint_assembly(char *buf, size_t len, struct insn *insn, int opts)
+{
+	int i = 0, ret;
+
+	insn_get_length(insn);
+	if (!insn_complete(insn))
+		return -EINVAL;
+
+	if (opts & DISASM_PR_ADDR)	/* print address */
+		psnprintf(&buf, &len, "%p: ", insn->kaddr);
+
+	if (opts & DISASM_PR_RAW) {	/* print raw instruction */
+		for (i = 0; i < MAX_INSN_SIZE / 2 && i < insn->length; i++)
+			psnprintf(&buf, &len, "%02x ", insn->kaddr[i]);
+		if (i != MAX_INSN_SIZE / 2)
+			psnprintf(&buf, &len, "%*s",
+				3 * (MAX_INSN_SIZE / 2 - i), " ");
+	}
+
+	/* print assembly code */
+	ret = disassemble(buf, len, insn);
+	if (ret < 0)
+		return ret;
+	len -= ret;
+	buf += ret;
+	psnprintf(&buf, &len, "\n");
+
+	/* print rest of raw instruction if exist */
+	if ((opts & DISASM_PR_RAW) && (i < insn->length)) {
+		if (opts & DISASM_PR_ADDR) /* print address */
+			psnprintf(&buf, &len, "%p: ", insn->kaddr + i);
+		for (;i < insn->length - 1; i++)
+			psnprintf(&buf, &len, "%02x ", insn->kaddr[i]);
+		psnprintf(&buf, &len, "%02x\n", insn->kaddr[i]);
+	}
+	return 0;
+}
