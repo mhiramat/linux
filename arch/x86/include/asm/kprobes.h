@@ -114,4 +114,6 @@ struct kprobe_ctlblk {
 extern int kprobe_fault_handler(struct pt_regs *regs, int trapnr);
 extern int kprobe_exceptions_notify(struct notifier_block *self,
 				    unsigned long val, void *data);
+extern unsigned long recover_probed_instruction(kprobe_opcode_t *buf,
+						unsigned long addr);
 #endif /* _ASM_X86_KPROBES_H */
