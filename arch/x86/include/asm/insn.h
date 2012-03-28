@@ -82,6 +82,7 @@ struct insn {
 #define X86_REX_R(rex) ((rex) & 4)
 #define X86_REX_X(rex) ((rex) & 2)
 #define X86_REX_B(rex) ((rex) & 1)
+#define X86_REX_WRXB(rex) ((rex) & 0xf)
 
 #define X86_OPCODE_GPR(opcode) ((opcode) & 0x07)
 
@@ -165,6 +166,19 @@ static inline int insn_last_prefix_id(struct insn *insn)
 	if (insn->prefixes.bytes[3])
 		return inat_get_last_prefix_id(insn->prefixes.bytes[3]);
 
+	return 0;
+}
+
+static inline insn_attr_t insn_has_segment_prefix(struct insn *insn)
+{
+	insn_attr_t attr;
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		attr = inat_get_opcode_attribute(insn->prefixes.bytes[i]);
+		if (inat_is_segment_prefix(attr))
+			return attr;
+	}
 	return 0;
 }
 
