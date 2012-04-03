@@ -298,9 +298,9 @@ int __kprobes __die(const char *str, struct pt_regs *regs, long err)
 extern int disasm_on_oops;
 
 /* Find the instruction boundary address */
-static unsigned long find_instruction_boundary(unsigned long saddr,
-						unsigned long *poffs,
-						char **modname, char *namebuf)
+unsigned long find_instruction_boundary(unsigned long saddr,
+					unsigned long *poffs,
+					char **modname, char *namebuf)
 {
 	kprobe_opcode_t buf[MAX_INSN_SIZE];
 	unsigned long offs, addr, fixed;
