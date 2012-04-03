@@ -323,13 +323,54 @@ static unsigned long find_instruction_boundary(unsigned long saddr,
 	return addr;
 }
 
+static int disasm_printk(unsigned long addr, unsigned long *next,
+			 unsigned long ip)
+{
+	char buf[DISASM_STR_LEN];
+	u8 kbuf[MAX_INSN_SIZE];
+	struct insn insn;
+	unsigned long fixed;
+	int i, ret;
+	u8 *v = (u8 *)addr;
+
+	/* recover if the instruction is probed */
+	fixed = recover_probed_instruction(kbuf, addr);
+	kernel_insn_init(&insn, (void *)fixed);
+	insn_get_length(&insn);
+	insn.kaddr = (void *)addr;
+
+	printk(KERN_CONT "%p: ", v);
+	for (i = 0; i < MAX_INSN_SIZE / 2 && i < insn.length; i++)
+		printk(KERN_CONT "%02x ", ((u8 *)v)[i]);
+	if (i != MAX_INSN_SIZE / 2)
+		printk(KERN_CONT "%*s", 3 * (MAX_INSN_SIZE / 2 - i), " ");
+
+	/* print assembly code */
+	ret = disassemble(buf, DISASM_STR_LEN, &insn);
+	if (ret < 0)
+		return ret;
+	printk(KERN_CONT "%s%s%s\n", (fixed != addr) ? "(probed)" : "", buf,
+		(addr == ip) ? "\t<-- trapping instruction" : "");
+
+	if (i < insn.length) {
+		printk(KERN_CONT "%p: ", v + i);
+		for (; i < insn.length - 1; i++)
+			printk(KERN_CONT "%02x ", ((u8 *)v)[i]);
+		printk(KERN_CONT "%02x\n", ((u8 *)v)[i]);
+	}
+
+	if (next)
+		*next = addr + insn.length;
+
+	return 0;
+}
+
 /* Disassemble between (ip - prologue) to (ip - prologue + length) */
 static int disassemble_code_dump(unsigned long ip, unsigned long prologue,
 				 unsigned long length)
 {
-	kprobe_opcode_t buf[MAX_INSN_SIZE];
-	unsigned long offs, addr, fixed;
-	unsigned long saddr = ip - prologue;
+	unsigned long offs;
+	unsigned long addr = ip - prologue;
 	unsigned long eaddr = ip - prologue + length;
 	char buf[KSYM_NAME_LEN] = {0};
 	char *modname;
@@ -338,10 +379,10 @@ static int disassemble_code_dump(unsigned long ip, unsigned long prologue,
 		return 1;
 
 	/* given address must be in text area */
-	if (!kernel_text_address(saddr) || !kernel_text_address(eaddr))
+	if (!kernel_text_address(addr) || !kernel_text_address(eaddr))
 		return -EINVAL;
 
-	addr = find_instruction_boundary(saddr, &offs, &modname, buf);
+	addr = find_instruction_boundary(addr, &offs, &modname, buf);
 	if (!addr)
 		return -EINVAL;
 
@@ -352,15 +393,8 @@ static int disassemble_code_dump(unsigned long ip, unsigned long prologue,
 		printk(KERN_CONT "\n<%s+0x%lx>:\n", buf, addr - (ip - offs));
 
 	do {
-		if (addr == ip)
-			printk(KERN_CONT ">>");
-		fixed = recover_probed_instruction(buf, addr);
-		kernel_insn_init(&insn, (void *)fixed);
-		insn_get_length(&insn);
-		insn.kaddr = addr;
-		snprint_assembly(buf, sizeof(buf), &insn, DISASM_PR_ALL);
-		printk(KERN_CONT "%s", buf);
-		addr += insn.length;
+		if (disasm_printk(addr, &addr, ip) < 0)
+			break;
 	} while (addr < eaddr);
 
 	return 0;
