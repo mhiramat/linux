@@ -28,6 +28,9 @@
 #define PANIC_BLINK_SPD 18
 
 int panic_on_oops;
+#ifdef CONFIG_DEBUG_DISASM_ON_OOPS
+int disasm_on_oops;
+#endif
 static unsigned long tainted_mask;
 static int pause_on_oops;
 static int pause_on_oops_flag;
@@ -471,6 +474,15 @@ static int __init oops_setup(char *s)
 {
 	if (!s)
 		return -EINVAL;
+	if (!strncmp(s, "disas", 5)) {
+#ifdef CONFIG_DEBUG_DISASM_ON_OOPS
+		disasm_on_oops = 1;
+#endif
+		s = strchr(s, ',');
+		if (!s)
+			return 0;
+		s++;
+	}
 	if (!strcmp(s, "panic"))
 		panic_on_oops = 1;
 	return 0;
