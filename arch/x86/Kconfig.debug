@@ -188,6 +188,14 @@ config DEBUG_X86_DISASSEMBLY
 	 This option adds /sys/kernel/debug/x86/disassembly interface
 	 for disassembling a kernel function.
 
+config DEBUG_DISASM_ON_OOPS
+	bool "Show disassembly code on OOPS"
+	select X86_DISASSEMBLER
+	---help---
+	 This option add a kernel parameter for showing disassembly
+	 code instead of raw code on OOPS message.
+	 To enable this feature, add "oops=disasm" to kernel boot
+	 parameter.
 #
 # IO delay types:
 #
