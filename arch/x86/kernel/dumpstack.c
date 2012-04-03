@@ -294,7 +294,8 @@ int __kprobes __die(const char *str, struct pt_regs *regs, long err)
 	return 0;
 }
 
-#ifdef CONFIG_X86_DISASSEMBLER
+#ifdef CONFIG_DEBUG_DISASM_ON_OOPS
+extern int disasm_on_oops;
 
 /* Find the instruction boundary address */
 static unsigned long find_instruction_boundary(unsigned long saddr,
@@ -332,6 +333,9 @@ static int disassemble_code_dump(unsigned long ip, unsigned long prologue,
 	unsigned long eaddr = ip - prologue + length;
 	char buf[KSYM_NAME_LEN] = {0};
 	char *modname;
+
+	if (!disasm_on_oops)
+		return 1;
 
 	/* given address must be in text area */
 	if (!kernel_text_address(saddr) || !kernel_text_address(eaddr))
