@@ -181,6 +181,13 @@ config X86_DISASSEMBLER
 	 kernel panic.
 	 If unsure, say "Y" here, since this will help you to report bugs.
 
+config DEBUG_X86_DISASSEMBLY
+	bool "x86 instruction disassembly interface on debugfs"
+	depends on X86_DISASSEMBLER && DEBUG_FS
+	---help---
+	 This option adds /sys/kernel/debug/x86/disassembly interface
+	 for disassembling a kernel function.
+
 #
 # IO delay types:
 #
