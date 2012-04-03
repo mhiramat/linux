@@ -289,13 +289,32 @@ static int disasm_seq_show(struct seq_file *m, void *v)
 	u8 kbuf[MAX_INSN_SIZE];
 	struct insn insn;
 	void *p;
+	int i, ret;
 
+	/* recover if the instruction is probed */
 	p = (void *)recover_probed_instruction(kbuf, (unsigned long)v);
 	kernel_insn_init(&insn, p);
 	insn_get_length(&insn);
 	insn.kaddr = v;
-	snprint_assembly(buf, DISASM_BUF_LEN, &insn, DISASM_PR_ALL);
-	seq_printf(m, "%s", buf);
+
+	seq_printf(m, "%p: ", v);
+	for (i = 0; i < MAX_INSN_SIZE / 2 && i < insn.length; i++)
+		seq_printf(m, "%02x ", ((u8 *)v)[i]);
+	if (i != MAX_INSN_SIZE / 2)
+		seq_printf(m, "%*s", 3 * (MAX_INSN_SIZE / 2 - i), " ");
+
+	/* print assembly code */
+	ret = disassemble(buf, DISASM_BUF_LEN, &insn);
+	if (ret < 0)
+		return ret;
+	seq_printf(m, "%s%s\n", (p != v) ? "(probed)" : "", buf);
+
+	if (i < insn.length) {
+		seq_printf(m, "%p: ", v + i);
+		for (; i < insn.length - 1; i++)
+			seq_printf(m, "%02x ", ((u8 *)v)[i]);
+		seq_printf(m, "%02x\n", ((u8 *)v)[i]);
+	}
 
 	return 0;
 }
