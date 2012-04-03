@@ -166,4 +166,7 @@ enum {
 extern int kdbgetintenv(const char *, int *);
 extern int kdb_set(int, const char **);
 
+/* Some architectures support disassembling in kernel */
+extern int kdb_show_disasm(unsigned long addr, size_t len);
+
 #endif	/* !_KDB_H */

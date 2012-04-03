@@ -2672,6 +2672,39 @@ static int kdb_per_cpu(int argc, const char **argv)
 	return 0;
 }
 
+int __weak kdb_show_disasm(unsigned long addr, size_t len)
+{
+	return KDB_NOTIMP;
+}
+
+/*
+ * kdb_dis - This function implements the 'dis' command.
+ */
+static int kdb_dis(int argc, const char **argv)
+{
+	int diag;
+	unsigned long addr;
+	long offset;
+	int nextarg;
+	unsigned long len;
+
+	if (argc > 3)
+		return KDB_ARGCOUNT;
+
+	nextarg = 1;
+	diag = kdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL);
+	if (diag)
+		return diag;
+
+	if (argc == 2) {
+		if (kstrtoul(argv[2], 0, &len) < 0)
+			return KDB_BADINT;
+	} else
+		len = 0;
+
+	return kdb_show_disasm(addr + offset, (size_t)len);
+}
+
 /*
  * display help for the use of cmd | grep pattern
  */
@@ -2899,6 +2932,8 @@ static void __init kdb_inittab(void)
 	  "Display per_cpu variables", 3, KDB_REPEAT_NONE);
 	kdb_register_repeat("grephelp", kdb_grep_help, "",
 	  "Display help on | grep", 0, KDB_REPEAT_NONE);
+	kdb_register_repeat("dis", kdb_dis, "<addr> [<len>]",
+	  "Display disassmbled code", 2, KDB_REPEAT_NONE);
 }
 
 /* Execute any commands defined in kdb_cmds.  */

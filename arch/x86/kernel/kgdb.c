@@ -39,15 +39,19 @@
 #include <linux/sched.h>
 #include <linux/delay.h>
 #include <linux/kgdb.h>
+#include <linux/kdb.h>
 #include <linux/init.h>
 #include <linux/smp.h>
 #include <linux/nmi.h>
 #include <linux/hw_breakpoint.h>
 #include <linux/uaccess.h>
 #include <linux/memory.h>
+#include <linux/kallsyms.h>
+#include <linux/kprobes.h>
 
 #include <asm/debugreg.h>
 #include <asm/apicdef.h>
+#include <asm/disasm.h>
 #include <asm/apic.h>
 #include <asm/nmi.h>
 
@@ -811,3 +815,71 @@ struct kgdb_arch arch_kgdb_ops = {
 	.remove_all_hw_break	= kgdb_remove_all_hw_break,
 	.correct_hw_break	= kgdb_correct_hw_break,
 };
+
+#if defined(CONFIG_X86_DISASSEMBLER)
+extern unsigned long find_instruction_boundary(unsigned long addr,
+						unsigned long *poffs,
+						char **modname, char *namebuf);
+
+static int kdb_disasm_printk(unsigned long addr, unsigned long *next)
+{
+	char buf[DISASM_STR_LEN];
+	u8 kbuf[MAX_INSN_SIZE];
+	struct insn insn;
+	unsigned long fixed;
+	int i, ret;
+	u8 *v = (u8 *)addr;
+
+	/* recover if the instruction is probed */
+	fixed = recover_probed_instruction(kbuf, addr);
+	kernel_insn_init(&insn, (void *)fixed);
+	insn_get_length(&insn);
+	insn.kaddr = (void *)addr;
+
+	kdb_printf("%p: ", v);
+	for (i = 0; i < MAX_INSN_SIZE / 2 && i < insn.length; i++)
+		kdb_printf("%02x ", ((u8 *)v)[i]);
+	if (i != MAX_INSN_SIZE / 2)
+		kdb_printf("%*s", 3 * (MAX_INSN_SIZE / 2 - i), " ");
+
+	/* print assembly code */
+	ret = disassemble(buf, DISASM_STR_LEN, &insn, DISASM_SYNTAX_ATT);
+	if (ret < 0)
+		return ret;
+	kdb_printf("%s%s\n", (fixed != addr) ? "(probed)" : "", buf);
+
+	if (i < insn.length) {
+		kdb_printf("%p: ", v + i);
+		for (; i < insn.length - 1; i++)
+			kdb_printf("%02x ", ((u8 *)v)[i]);
+		kdb_printf("%02x\n", ((u8 *)v)[i]);
+	}
+
+	if (next)
+		*next = addr + insn.length;
+
+	return 0;
+}
+
+int kdb_show_disasm(unsigned long addr, size_t len)
+{
+	unsigned long offs, eaddr = addr + len;
+	char buf[KSYM_NAME_LEN] = {0};
+	char *modname;
+
+	addr = find_instruction_boundary(addr, &offs, &modname, buf);
+	if (!addr)
+		return KDB_BADADDR;
+
+	if (modname)
+		kdb_printf("<%s+0x%lx [%s]>:\n", buf, offs, modname);
+	else
+		kdb_printf("<%s+0x%lx>:\n", buf, offs);
+
+	do {
+		kdb_disasm_printk(addr, &addr);
+	} while (addr < eaddr);
+
+	return 0;
+}
+#endif
