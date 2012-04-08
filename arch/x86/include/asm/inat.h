@@ -50,6 +50,8 @@
 #define INAT_PFX_VEX3	14	/* 3-bytes VEX prefix */
 
 #define INAT_LSTPFX_MAX	3
+#define INAT_SEGPFX_MIN	5
+#define INAT_SEGPFX_MAX	10
 #define INAT_LGCPFX_MAX	11
 
 /* Immediate size */
@@ -114,6 +116,12 @@ static inline int inat_is_legacy_prefix(insn_attr_t attr)
 {
 	attr &= INAT_PFX_MASK;
 	return attr && attr <= INAT_LGCPFX_MAX;
+}
+
+static inline int inat_is_segment_prefix(insn_attr_t attr)
+{
+	attr &= INAT_PFX_MASK;
+	return INAT_SEGPFX_MIN <= attr && attr <= INAT_SEGPFX_MAX;
 }
 
 static inline int inat_is_address_size_prefix(insn_attr_t attr)
