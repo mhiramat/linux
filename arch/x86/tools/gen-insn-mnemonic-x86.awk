@@ -212,10 +212,10 @@ function get_operand(opnd,	i,count,f8,opnds) {
 			opnds[i] = "_" tolower(opnds[i])
 	}
 
-	for (i = 1; i <= count; i++) {
+	for (i = count; i > 0; i--) {
 		if (f8 == 1 && match(opnds[i],"Ib"))
 			opnds[i] = toupper(opnds[i])
-		if (i == 1)
+		if (i == count)
 			opnd = opnds[i]
 		else
 			opnd = opnd "," opnds[i]
