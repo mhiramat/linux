@@ -36,12 +36,12 @@
 #define INAT_PFX_REPNE	3	/* 0xF2 */ /* LPFX3 */
 /* Other Legacy prefixes */
 #define INAT_PFX_LOCK	4	/* 0xF0 */
-#define INAT_PFX_CS	5	/* 0x2E */
-#define INAT_PFX_DS	6	/* 0x3E */
-#define INAT_PFX_ES	7	/* 0x26 */
-#define INAT_PFX_FS	8	/* 0x64 */
-#define INAT_PFX_GS	9	/* 0x65 */
-#define INAT_PFX_SS	10	/* 0x36 */
+#define INAT_PFX_ES	5	/* 0x26 */
+#define INAT_PFX_CS	6	/* 0x2E */
+#define INAT_PFX_SS	7	/* 0x36 */
+#define INAT_PFX_DS	8	/* 0x3E */
+#define INAT_PFX_FS	9	/* 0x64 */
+#define INAT_PFX_GS	10	/* 0x65 */
 #define INAT_PFX_ADDRSZ	11	/* 0x67 */
 /* x86-64 REX prefix */
 #define INAT_PFX_REX	12	/* 0x4X */
