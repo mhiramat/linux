@@ -101,9 +101,19 @@ static bool operand_is_fixmem(const char *p)
 	return *p == 'X' || *p == 'Y';
 }
 
+static bool operand_is_mmx_rm(const char *p)
+{
+	return *p == 'N' || *p == 'Q';
+}
+
 static bool operand_is_memreg(const char *p)
 {
-	return *p == 'E' || *p == 'M' || *p == 'R';
+	return *p == 'E' || *p == 'M' || *p == 'R' || operand_is_mmx_rm(p);
+}
+
+static bool operand_is_mmxreg(const char *p)
+{
+	return *p == 'P';
 }
 
 /* register maps */
@@ -127,7 +137,7 @@ static unsigned int insn_field_get_uval(struct insn_field *field)
 
 static int bad_modrm_operand(char c, int mod)
 {
-	return (c == 'R' && mod != 3) || (c == 'M' && mod == 3);
+	return ((c == 'R' || c == 'N') && mod != 3) || (c == 'M' && mod == 3);
 }
 
 /* Print General Purpose Registers by number */
@@ -309,8 +319,12 @@ static int disasm_modrm(char **buf, size_t *len, const char *opnd,
 	if (bad_modrm_operand(*opnd, mod))
 		psnprintf(buf, len, "(bad)");
 
-	if (mod == 0x3)	/* mod == 11B: GPR, MM or XMM */
-		return disasm_rm_gpr(buf, len, opnd, end, insn);
+	if (mod == 0x3)	{ /* mod == 11B: GPR, MM or XMM */
+		if (operand_is_mmx_rm(opnd))
+			return psnprintf(buf, len, "%%mm%d", rm);
+		else
+			return disasm_rm_gpr(buf, len, opnd, end, insn);
+	}
 
 	/* Memory addressing */
 	if (insn->sib.nbytes)	/* SIB addressing */
@@ -435,6 +449,9 @@ static int disasm_operand(char **buf, size_t *len, const char *opnd,
 	} else if (operand_is_seg_reg(opnd)) {
 		int idx = X86_MODRM_REG(insn->modrm.bytes[0]);
 		return psnprintf(buf, len, "%%%s", segreg_map[idx]);
+	} else if (operand_is_mmxreg(opnd)) {
+		int idx = X86_MODRM_REG(insn->modrm.bytes[0]);
+		return psnprintf(buf, len, "%%mm%d", idx);
 	} else if (operand_is_fixmem(opnd))
 		return disasm_fixmem(buf, len, opnd, end, insn);
 	else if (operand_is_flags(opnd))
