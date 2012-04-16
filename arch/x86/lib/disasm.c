@@ -126,6 +126,21 @@ static bool operand_is_xmmreg(const char *p)
 	return *p == 'V';
 }
 
+static bool operand_is_gpr_vex(const char *p)
+{
+	return *p == 'B';
+}
+
+static bool operand_is_xmm_vex(const char *p)
+{
+	return *p == 'H';
+}
+
+static bool operand_is_xmm_imm(const char *p)
+{
+	return *p == 'L';
+}
+
 /* register maps */
 const char *gpreg_map[8] = {"ax", "cx", "dx", "bx", "sp", "bp", "si", "di"};
 const char *gpreg8_map[8] = {"al", "cl", "dl", "bl", "ah", "ch", "dh", "bh"};
@@ -185,6 +200,18 @@ static int psnprint_gpr64(char **buf, size_t *len, int idx)
 		return psnprintf(buf, len, "%%r%d", idx);
 }
 
+static int psnprint_xmmreg(char **buf, size_t *len, const char *opnd,
+			   struct insn *insn, int idx)
+{
+	int c = 'x';
+	if (opnd[1] == 'q' ||	/* Should be Quad-Quad(qq)word */
+	    (opnd[1] != 's' && insn_vex_l_bit(insn)))
+		c = 'y';
+
+	return psnprintf(buf, len, "%%%cmm%d", c, idx);
+}
+
+
 /* Disassemble GPR operands */
 static int __disasm_gpr(char **buf, size_t *len, const char *opnd,
 			const char *end, struct insn *insn, int idx)
@@ -200,6 +227,7 @@ static int __disasm_gpr(char **buf, size_t *len, const char *opnd,
 		else
 			return psnprint_gpr32(buf, len, idx);
 	case 'v':
+	case 'y':
 		if (insn->opnd_bytes == 8)
 			return psnprint_gpr64(buf, len, idx);
 		else if (insn->opnd_bytes == 4)
@@ -216,7 +244,7 @@ static int disasm_rm_gpr(char **buf, size_t *len, const char *opnd,
 			const char *end, struct insn *insn)
 {
 	int idx = X86_MODRM_RM(insn->modrm.bytes[0]);
-	if (insn->rex_prefix.nbytes && X86_REX_B(insn->rex_prefix.bytes[0]))
+	if (insn_rex_b_bit(insn))
 		idx += 8;
 	return __disasm_gpr(buf, len, opnd, end, insn, idx);
 }
@@ -226,12 +254,18 @@ static int disasm_reg_gpr(char **buf, size_t *len, const char *opnd,
 			const char *end, struct insn *insn)
 {
 	int idx = X86_MODRM_REG(insn->modrm.bytes[0]);
-	if (insn->rex_prefix.nbytes) {
-		if (X86_REX_R(insn->rex_prefix.bytes[0]))
-			idx += 8;
-		else if (X86_REX_WRXB(insn->rex_prefix.bytes[0]) == 0)
-			idx += 16;
-	}
+	if (insn_rex_r_bit(insn))
+		idx += 8;
+	else if (insn->rex_prefix.nbytes && X86_REX_WRXB(insn->rex_prefix.bytes[0]) == 0)
+		idx += 16;
+	return __disasm_gpr(buf, len, opnd, end, insn, idx);
+}
+
+/* Disassemble GPR operand from VEX.v bits */
+static int disasm_vex_gpr(char **buf, size_t *len, const char *opnd,
+			const char *end, struct insn *insn)
+{
+	int idx = 15 - insn_vex_v_bits(insn);
 	return __disasm_gpr(buf, len, opnd, end, insn, idx);
 }
 
@@ -240,7 +274,7 @@ static int disasm_opcode_gpr(char **buf, size_t *len, const char *opnd,
 			     const char *end, struct insn *insn)
 {
 	int idx = X86_OPCODE_GPR(insn->opcode.bytes[insn->opcode.nbytes - 1]);
-	if (insn->rex_prefix.nbytes && X86_REX_R(insn->rex_prefix.bytes[0]))
+	if (insn_rex_r_bit(insn))
 		idx += 8;
 	return __disasm_gpr(buf, len, opnd, end, insn, idx);
 }
@@ -293,8 +327,8 @@ static int disasm_sib(char **buf, size_t *len, const char *opnd,
 	int scale = X86_SIB_SCALE(insn->sib.bytes[0]);
 	int index = X86_SIB_INDEX(insn->sib.bytes[0]);
 	int base = X86_SIB_BASE(insn->sib.bytes[0]);
-	int rexb = X86_REX_B(insn->rex_prefix.bytes[0]) * 8;
-	int rexx = X86_REX_X(insn->rex_prefix.bytes[0]) * 8;
+	int rexb = insn_rex_b_bit(insn) ? 8 : 0; 
+	int rexx = insn_rex_x_bit(insn) ? 8 : 0;
 
 	/* Check the case which has just a displacement */
 	if (mod == 0 && index == 4 && base == 5)
@@ -332,9 +366,11 @@ static int disasm_modrm(char **buf, size_t *len, const char *opnd,
 	if (mod == 0x3)	{ /* mod == 11B: GPR, MM or XMM */
 		if (operand_is_mmx_rm(opnd))
 			return psnprintf(buf, len, "%%mm%d", rm);
-		else if (operand_is_xmm_rm(opnd))
-			return psnprintf(buf, len, "%%xmm%d", rm);
-		else
+		else if (operand_is_xmm_rm(opnd)) {
+			if (insn_rex_b_bit(insn))
+				rm += 8;
+			return psnprint_xmmreg(buf, len, opnd, insn, rm);
+		} else
 			return disasm_rm_gpr(buf, len, opnd, end, insn);
 	}
 
@@ -357,7 +393,7 @@ static int disasm_modrm(char **buf, size_t *len, const char *opnd,
 				psnprintf(buf, len, "0x%x", insn->displacement.value);
 		}
 		psnprintf(buf, len, "(");
-		if (insn->rex_prefix.nbytes && X86_REX_B(insn->rex_prefix.bytes[0]))
+		if (insn_rex_b_bit(insn))
 			rm += 8;
 		__disasm_gprea(buf, len, opnd, end, insn, rm);
 		return psnprintf(buf, len, ")");
@@ -466,8 +502,18 @@ static int disasm_operand(char **buf, size_t *len, const char *opnd,
 		return psnprintf(buf, len, "%%mm%d", idx);
 	} else if (operand_is_xmmreg(opnd)) {
 		int idx = X86_MODRM_REG(insn->modrm.bytes[0]);
-		return psnprintf(buf, len, "%%xmm%d", idx);
-	} else if (operand_is_fixmem(opnd))
+		if (insn_rex_r_bit(insn))
+			idx += 8;
+		return psnprint_xmmreg(buf, len, opnd, insn, idx);
+	} else if (operand_is_xmm_vex(opnd)) {
+		int idx = 15 - insn_vex_v_bits(insn);
+		return psnprint_xmmreg(buf, len, opnd, insn, idx);
+	} else if (operand_is_xmm_imm(opnd)) {
+		int idx = (insn->immediate.bytes[0] >> 4);
+		return psnprint_xmmreg(buf, len, opnd, insn, idx);
+	} else if (operand_is_gpr_vex(opnd))
+		return disasm_vex_gpr(buf, len, opnd, end, insn);
+	else if (operand_is_fixmem(opnd))
 		return disasm_fixmem(buf, len, opnd, end, insn);
 	else if (operand_is_flags(opnd))
 		/* Ignore EFLAGS/RFLAGS */

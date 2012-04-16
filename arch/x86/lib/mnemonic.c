@@ -35,12 +35,20 @@ const char *get_mnemonic_format(struct insn *insn, const char **grp)
 	if (!insn_complete(insn))
 		goto fail;	/* Decode it first! */
 
+	idx = *bytes;
 	if (insn_is_avx(insn)) {
 		/* Lookup AVX instruction */
-		goto fail;
+		n = insn_vex_m_bits(insn);
+		if (n == 0 || n > 3)	/* out of range */
+			goto fail;
+		m = insn_vex_p_bits(insn);
+		attr = inat_get_avx_attribute(idx, n, 0);
+		if (!inat_is_group(attr) && m)
+			table = mnemonic_escape_tables[n][m];
+		else
+			table = mnemonic_escape_tables[n][0];
 	} else {
 		/* Lookup normal instruction */
-		idx = *bytes;
 		attr = inat_get_opcode_attribute(idx);
 		m = insn_last_prefix_id(insn);
 		/*TODO use (inat_has_variant(attr))*/
@@ -57,21 +65,21 @@ const char *get_mnemonic_format(struct insn *insn, const char **grp)
 			else
 				table = mnemonic_escape_tables[n][0];
 		}
-		if (table)
-			ret = get_variant(table[idx], insn);
+	}
+	if (table)
+		ret = get_variant(table[idx], insn);
 
-		/* Solve groups */
-		if (grp && inat_is_group(attr)) {
-			n = inat_group_id(attr);
-			idx = insn->modrm.bytes[0];
-			attr = inat_get_group_attribute(idx, 0, attr);
-			if (inat_has_variant(attr))
-				table = mnemonic_group_tables[n][m];
-			else
-				table = mnemonic_group_tables[n][0];
-			idx = X86_MODRM_REG(idx);
-			*grp = get_variant(table[idx], insn);
-		}
+	/* Solve groups */
+	if (grp && inat_is_group(attr)) {
+		n = inat_group_id(attr);
+		idx = insn->modrm.bytes[0];
+		attr = inat_get_group_attribute(idx, 0, attr);
+		if (inat_has_variant(attr))
+			table = mnemonic_group_tables[n][m];
+		else
+			table = mnemonic_group_tables[n][0];
+		idx = X86_MODRM_REG(idx);
+		*grp = get_variant(table[idx], insn);
 	}
 	return ret;
 
