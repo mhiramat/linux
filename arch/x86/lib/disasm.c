@@ -13,8 +13,6 @@
 
 #include <asm/disasm.h>
 
-#define X86_LEA_OPCODE 0x8d
-
 static int psnprintf(char **buf, size_t *len, const char *fmt, ...)
 {
 	va_list ap;
@@ -32,33 +30,21 @@ static int psnprintf(char **buf, size_t *len, const char *fmt, ...)
 	return ret;
 }
 
-#ifdef __KERNEL__
-/* Print address with symbol */
+/* Print address with symbol if possible (in kernel) */
 static int psnprint_symbol(char **buf, size_t *len, unsigned long addr)
 {
-	unsigned long offs;
-	char func[KSYM_NAME_LEN];
-	char *modname;
 	int ret;
 
 	ret = psnprintf(buf, len, "%lx", addr);
-	if (!kallsyms_lookup(addr, NULL, &offs, &modname, func))
-		return ret;
-
-	psnprintf(buf, len, " <%s", func);
-	if (offs)
-		psnprintf(buf, len, "+0x%lx", offs);
-	if (modname)
-		psnprintf(buf, len, " [%s]", modname);
-
-	return psnprintf(buf, len, ">");
-}
-#else
-static int psnprint_symbol(char **buf, size_t *len, unsigned long addr)
-{
-	return psnprintf(buf, len, "%lx", addr);
-}
+#ifdef __KERNEL__
+	if (ret > 0)
+		ret = psnprintf(buf, len, " <%pS>", addr);
 #endif
+	return ret;
+}
+
+typedef int (*disasm_handler_t)(char **buf, size_t *len, const char *opnd,
+				struct insn *insn);
 
 /* Operand classifiers */
 static bool operand_is_register(const char *p)
@@ -66,12 +52,7 @@ static bool operand_is_register(const char *p)
 	return !isupper(*p);
 }
 
-static bool operand_is_imm(const char *p)
-{
-	return strchr("AIJO", *p) != NULL;
-}
-
-static bool operand_is_gp_reg(const char *p)
+static bool operand_is_gpr_reg(const char *p)
 {
 	return *p == 'G';
 }
@@ -91,54 +72,20 @@ static bool operand_is_seg_reg(const char *p)
 	return *p == 'S';
 }
 
-static bool operand_is_flags(const char *p)
-{
-	return *p == 'F';
-}
-
-static bool operand_is_fixmem(const char *p)
-{
-	return *p == 'X' || *p == 'Y';
-}
-
-static bool operand_is_mmx_rm(const char *p)
-{
-	return *p == 'N' || *p == 'Q';
-}
-
-static bool operand_is_xmm_rm(const char *p)
-{
-	return *p == 'U' || *p == 'W';
-}
-
-static bool operand_is_memreg(const char *p)
-{
-	return *p == 'E' || *p == 'M' || *p == 'R' || operand_is_mmx_rm(p) || operand_is_xmm_rm(p);
-}
-
-static bool operand_is_mmxreg(const char *p)
-{
-	return *p == 'P';
-}
-
-static bool operand_is_xmmreg(const char *p)
+static bool operand_is_xmm_reg(const char *p)
 {
 	return *p == 'V';
 }
 
-static bool operand_is_gpr_vex(const char *p)
+static bool operand_is_mmx_reg(const char *p)
 {
-	return *p == 'B';
+	return *p == 'P';
 }
 
-static bool operand_is_xmm_vex(const char *p)
+/* Operand must be a register */
+static bool operand_is_regs_rm(const char *p)
 {
-	return *p == 'H';
-}
-
-static bool operand_is_xmm_imm(const char *p)
-{
-	return *p == 'L';
+	return *p == 'N' || *p == 'U' || *p == 'R';
 }
 
 /* register maps */
@@ -158,11 +105,6 @@ static unsigned int insn_field_get_uval(struct insn_field *field)
 	default:
 		return (unsigned int)field->value;
 	}
-}
-
-static int bad_modrm_operand(char c, int mod)
-{
-	return ((c == 'R' || c == 'N' || c == 'U') && mod != 3) || (c == 'M' && mod == 3);
 }
 
 /* Print General Purpose Registers by number */
@@ -221,7 +163,7 @@ static int psnprint_xmmreg(char **buf, size_t *len, const char *opnd,
 
 /* Disassemble GPR operands */
 static int __disasm_gpr(char **buf, size_t *len, const char *opnd,
-			const char *end, struct insn *insn, int idx)
+			struct insn *insn, int idx)
 {
 	switch (opnd[1]) {
 	case 'b':
@@ -244,53 +186,38 @@ static int __disasm_gpr(char **buf, size_t *len, const char *opnd,
 		else
 			return psnprint_gpr16(buf, len, idx);
 	default:
-		return psnprintf(buf, len, "(%.*s)(bad)", end - opnd, opnd);
+		return psnprintf(buf, len, "(bad:unkown_%c)", opnd[1]);
 	}
 }
 
-/* Disassemble GPR operand from RM bits */
-static int disasm_rm_gpr(char **buf, size_t *len, const char *opnd,
-			const char *end, struct insn *insn)
-{
-	int idx = X86_MODRM_RM(insn->modrm.bytes[0]);
-	if (insn_rex_b_bit(insn))
-		idx += 8;
-	return __disasm_gpr(buf, len, opnd, end, insn, idx);
-}
-
-/* Disassemble GPR operand from Reg bits */
-static int disasm_reg_gpr(char **buf, size_t *len, const char *opnd,
-			const char *end, struct insn *insn)
-{
-	int idx = X86_MODRM_REG(insn->modrm.bytes[0]);
-	if (insn_rex_r_bit(insn))
-		idx += 8;
-	else if (insn->rex_prefix.nbytes && opnd[1] == 'b')
-		return psnprint_gpr8_rex(buf, len, idx);
-	return __disasm_gpr(buf, len, opnd, end, insn, idx);
-}
-
-/* Disassemble GPR operand from VEX.v bits */
+/* Disassemble register operand from VEX.v bits */
 static int disasm_vex_gpr(char **buf, size_t *len, const char *opnd,
-			const char *end, struct insn *insn)
+			  struct insn *insn)
 {
 	int idx = 15 - insn_vex_v_bits(insn);
-	return __disasm_gpr(buf, len, opnd, end, insn, idx);
+	return __disasm_gpr(buf, len, opnd, insn, idx);
+}
+
+static int disasm_vex_xmm(char **buf, size_t *len, const char *opnd,
+			  struct insn *insn)
+{
+	int idx = 15 - insn_vex_v_bits(insn);
+	return psnprint_xmmreg(buf, len, opnd, insn, idx);
 }
 
 /* Disassemble GPR operand from Opcode */
 static int disasm_opcode_gpr(char **buf, size_t *len, const char *opnd,
-			     const char *end, struct insn *insn)
+			     struct insn *insn)
 {
 	int idx = X86_OPCODE_GPR(insn->opcode.bytes[insn->opcode.nbytes - 1]);
 	if (insn_rex_b_bit(insn))
 		idx += 8;
-	return __disasm_gpr(buf, len, opnd, end, insn, idx);
+	return __disasm_gpr(buf, len, opnd, insn, idx);
 }
 
 /* Disassemble GPR for Effective Address */
 static int __disasm_gprea(char **buf, size_t *len, const char *opnd,
-			const char *end, struct insn *insn, int idx)
+			  struct insn *insn, int idx)
 {
 	if (insn->addr_bytes == 8)
 		return psnprint_gpr64(buf, len, idx);
@@ -330,7 +257,7 @@ static int disasm_displacement(char **buf, size_t *len, struct insn *insn)
 
 /* Disassemble SIB byte */
 static int disasm_sib(char **buf, size_t *len, const char *opnd,
-			const char *end, struct insn *insn)
+		      struct insn *insn)
 {
 	int mod = X86_MODRM_MOD(insn->modrm.bytes[0]);
 	int scale = X86_SIB_SCALE(insn->sib.bytes[0]);
@@ -352,40 +279,29 @@ static int disasm_sib(char **buf, size_t *len, const char *opnd,
 	}
 	psnprintf(buf, len, "(");
 	if (mod != 0 || base != 5)	/* With base */
-		__disasm_gprea(buf, len, opnd, end, insn, base + rexb);
+		__disasm_gprea(buf, len, opnd, insn, base + rexb);
 
 	if (index != 4)	{	/* With scale * index */
 		psnprintf(buf, len, ",");
-		__disasm_gprea(buf, len, opnd, end, insn, index + rexx);
+		__disasm_gprea(buf, len, opnd, insn, index + rexx);
 		psnprintf(buf, len, ",%x", 1 << scale);
 	}
 	return psnprintf(buf, len, ")");
 }
 
-/* Disassemble memory-register from MODR/M */
-static int disasm_modrm(char **buf, size_t *len, const char *opnd,
-			const char *end, struct insn *insn)
+/* Disassemble memory from MODR/M */
+static int disasm_modrm_mem(char **buf, size_t *len, const char *opnd,
+			    struct insn *insn)
 {
 	int mod = X86_MODRM_MOD(insn->modrm.bytes[0]);
 	int rm = X86_MODRM_RM(insn->modrm.bytes[0]);
 
-	if (bad_modrm_operand(*opnd, mod))
-		psnprintf(buf, len, "(bad)");
-
-	if (mod == 0x3)	{ /* mod == 11B: GPR, MM or XMM */
-		if (operand_is_mmx_rm(opnd))
-			return psnprintf(buf, len, "%%mm%d", rm);
-		else if (operand_is_xmm_rm(opnd)) {
-			if (insn_rex_b_bit(insn))
-				rm += 8;
-			return psnprint_xmmreg(buf, len, opnd, insn, rm);
-		} else
-			return disasm_rm_gpr(buf, len, opnd, end, insn);
-	}
+	if (operand_is_regs_rm(opnd) || mod == 0x3)
+		return psnprintf(buf, len, "(bad)");
 
 	/* Memory addressing */
 	if (insn->sib.nbytes)	/* SIB addressing */
-		return disasm_sib(buf, len, opnd, end, insn);
+		return disasm_sib(buf, len, opnd, insn);
 
 	if (mod == 0 && rm == 5) {	/* displacement only */
 		if (insn_rip_relative(insn))	/* RIP relative */
@@ -404,13 +320,72 @@ static int disasm_modrm(char **buf, size_t *len, const char *opnd,
 		psnprintf(buf, len, "(");
 		if (insn_rex_b_bit(insn))
 			rm += 8;
-		__disasm_gprea(buf, len, opnd, end, insn, rm);
+		__disasm_gprea(buf, len, opnd, insn, rm);
 		return psnprintf(buf, len, ")");
 	}
 }
 
+static int __insn_rm(struct insn *insn)
+{
+	int rm = X86_MODRM_RM(insn->modrm.bytes[0]);
+	if (insn_rex_b_bit(insn))
+		rm += 8;
+
+	return rm;
+}
+
+/* Disassemble memory-register(gpr) from MODR/M */
+static int disasm_modrm_gpr(char **buf, size_t *len, const char *opnd,
+			    struct insn *insn)
+{
+	if (X86_MODRM_MOD(insn->modrm.bytes[0]) == 0x3)	/* mod == 11B: GPR */
+		return __disasm_gpr(buf, len, opnd, insn, __insn_rm(insn));
+
+	return disasm_modrm_mem(buf, len, opnd, insn);
+}
+
+/* Disassemble memory-register(mmx) from MODR/M */
+static int disasm_modrm_mmx(char **buf, size_t *len, const char *opnd,
+			    struct insn *insn)
+{
+	if (X86_MODRM_MOD(insn->modrm.bytes[0]) == 0x3)	/* mod == 11B: MMX */
+		return psnprintf(buf, len, "%%mm%d", __insn_rm(insn));
+
+	return disasm_modrm_mem(buf, len, opnd, insn);
+}
+
+/* Disassemble memory-register(xmm) from MODR/M */
+static int disasm_modrm_xmm(char **buf, size_t *len, const char *opnd,
+			    struct insn *insn)
+{
+	if (X86_MODRM_MOD(insn->modrm.bytes[0]) == 0x3)	/* mod == 11B: XMM */
+		return psnprint_xmmreg(buf, len, opnd, insn, __insn_rm(insn));
+
+	return disasm_modrm_mem(buf, len, opnd, insn);
+}
+
+/* Disassemble immediates */
+static int disasm_imm_relip(char **buf, size_t *len, const char *opnd,
+			    struct insn *insn)
+{
+	return psnprint_symbol(buf, len, insn->immediate.value + (unsigned long)insn->kaddr + insn->length);
+}
+
+static int disasm_imm_absip(char **buf, size_t *len, const char *opnd,
+			    struct insn *insn)
+{
+	return psnprint_symbol(buf, len, insn->immediate.value);
+}
+
+static int disasm_imm_xmm(char **buf, size_t *len, const char *opnd,
+			  struct insn *insn)
+{
+	int idx = (insn->immediate.bytes[0] >> 4);
+	return psnprint_xmmreg(buf, len, opnd, insn, idx);
+}
+
 static int disasm_immediate(char **buf, size_t *len, const char *opnd,
-			    const char *end, struct insn *insn)
+			    struct insn *insn)
 {
 	long long imm;
 	int size;
@@ -432,14 +407,8 @@ static int disasm_immediate(char **buf, size_t *len, const char *opnd,
 	else
 		imm = insn->immediate1.value;
 
-	if (opnd[0] == 'J' || opnd[0] == 'A') {
-		if (opnd[0] == 'J') /* Relative from IP */
-			imm += (long)insn->kaddr + insn->length;
-		return psnprint_symbol(buf, len, (unsigned long)imm);
-	}
-
 	size = insn->opnd_bytes;
-	if (opnd[1] == 'B')
+	if (opnd[1] == 'B')	/* Forcibly 8bit cast */
 		size = 1;
 	switch (size) {
 	case 8:
@@ -454,7 +423,7 @@ static int disasm_immediate(char **buf, size_t *len, const char *opnd,
 }
 
 static int disasm_fixmem(char **buf, size_t *len, const char *opnd,
-			 const char *end, struct insn *insn)
+			 struct insn *insn)
 {
 	const char *pfx = "";
 	if (insn->addr_bytes == 4)
@@ -466,6 +435,93 @@ static int disasm_fixmem(char **buf, size_t *len, const char *opnd,
 			 pfx, *opnd == 'X' ? 's' : 'd');
 }
 
+/* Disassemble any register operand from Reg bits */
+static int disasm_reg_regs(char **buf, size_t *len, const char *opnd,
+			   struct insn *insn)
+{
+	int idx = X86_MODRM_REG(insn->modrm.bytes[0]);
+
+	if (insn_rex_r_bit(insn))
+		idx += 8;
+
+	if (operand_is_gpr_reg(opnd)) {
+		if (insn->rex_prefix.nbytes && opnd[1] == 'b')
+			return psnprint_gpr8_rex(buf, len, idx);
+		else
+			return __disasm_gpr(buf, len, opnd, insn, idx);
+	}
+
+	if (operand_is_xmm_reg(opnd))
+		return psnprint_xmmreg(buf, len, opnd, insn, idx);
+
+	if (idx > 7 && !(operand_is_dbg_reg(opnd) && idx == 8))
+		goto err;
+
+	if (operand_is_ctl_reg(opnd))
+		return psnprintf(buf, len, "%%cr%d", idx);
+	else if (operand_is_dbg_reg(opnd))
+		return psnprintf(buf, len, "%%dr%d", idx);
+	else if (operand_is_seg_reg(opnd))
+		return psnprintf(buf, len, "%%%s", segreg_map[idx]);
+	else if (operand_is_mmx_reg(opnd))
+		return psnprintf(buf, len, "%%mm%d", idx);
+
+err:
+	return psnprintf(buf, len, "(bad)");
+}
+
+static int disasm_flags(char **buf, size_t *len, const char *opnd,
+			struct insn *insn)
+{
+	/* Ignore EFLAGS/RFLAGS */
+	return 0;
+}
+
+/* Operand code of addressing methods - see Intel SDM A.2.1 */
+#define opnd2idx(abbr)	(abbr - 'A')
+#define DEFINE_ADDR_METHOD(abbr, method) [opnd2idx(abbr)] = method
+#define MAX_ADDR_METHODS	26
+
+static const disasm_handler_t addressing_methods[MAX_ADDR_METHODS] = {
+	DEFINE_ADDR_METHOD('A', disasm_imm_absip),
+	DEFINE_ADDR_METHOD('B', disasm_vex_gpr),
+	DEFINE_ADDR_METHOD('C', disasm_reg_regs),
+	DEFINE_ADDR_METHOD('D', disasm_reg_regs),
+	DEFINE_ADDR_METHOD('E', disasm_modrm_gpr),
+	DEFINE_ADDR_METHOD('F', disasm_flags),
+	DEFINE_ADDR_METHOD('G', disasm_reg_regs),
+	DEFINE_ADDR_METHOD('H', disasm_vex_xmm),
+	DEFINE_ADDR_METHOD('I', disasm_immediate),
+	DEFINE_ADDR_METHOD('J', disasm_imm_relip),
+	DEFINE_ADDR_METHOD('K', NULL),
+	DEFINE_ADDR_METHOD('L', disasm_imm_xmm),
+	DEFINE_ADDR_METHOD('M', disasm_modrm_mem),
+	DEFINE_ADDR_METHOD('N', disasm_modrm_mmx),
+	DEFINE_ADDR_METHOD('O', disasm_immediate),
+	DEFINE_ADDR_METHOD('P', disasm_reg_regs),
+	DEFINE_ADDR_METHOD('Q', disasm_modrm_mmx),
+	DEFINE_ADDR_METHOD('R', disasm_modrm_gpr),
+	DEFINE_ADDR_METHOD('S', disasm_reg_regs),
+	DEFINE_ADDR_METHOD('T', NULL),
+	DEFINE_ADDR_METHOD('U', disasm_modrm_xmm),
+	DEFINE_ADDR_METHOD('V', disasm_reg_regs),
+	DEFINE_ADDR_METHOD('W', disasm_modrm_xmm),
+	DEFINE_ADDR_METHOD('X', disasm_fixmem),
+	DEFINE_ADDR_METHOD('Y', disasm_fixmem),
+	DEFINE_ADDR_METHOD('Z', NULL),
+};
+
+static disasm_handler_t get_addressing_method(const char *opnd)
+{
+	int idx = opnd2idx(opnd[0]);
+
+	if (idx < 0 || idx >= MAX_ADDR_METHODS)
+		return NULL;
+
+	return addressing_methods[idx];
+}
+
+/* Disassemble raw register operand */
 static int disasm_register(char **buf, size_t *len, const char *opnd,
 			   const char *end, struct insn *insn)
 {
@@ -480,7 +536,7 @@ static int disasm_register(char **buf, size_t *len, const char *opnd,
 			opnd += 2;
 			return psnprintf(buf, len, "%%%s%.*s", pfx, end - opnd, opnd);
 		} else
-			return disasm_opcode_gpr(buf, len, opnd, end, insn);
+			return disasm_opcode_gpr(buf, len, opnd, insn);
 	} else
 		return psnprintf(buf, len, "%%%.*s", end - opnd, opnd);
 }
@@ -489,46 +545,16 @@ static int disasm_register(char **buf, size_t *len, const char *opnd,
 static int disasm_operand(char **buf, size_t *len, const char *opnd,
 			  const char *end, struct insn *insn)
 {
+	disasm_handler_t disasm_op;
+
 	if (operand_is_register(opnd))
 		return disasm_register(buf, len, opnd, end, insn);
-	else if (operand_is_memreg(opnd))	/* Mod and RM */
-		return disasm_modrm(buf, len, opnd, end, insn);
-	else if (operand_is_imm(opnd)) /* Immedate */
-		return disasm_immediate(buf, len, opnd, end, insn);
-	else if (operand_is_gp_reg(opnd))
-		return disasm_reg_gpr(buf, len, opnd, end, insn);
-	else if (operand_is_ctl_reg(opnd)) {
-		int idx = X86_MODRM_REG(insn->modrm.bytes[0]);
-		return psnprintf(buf, len, "%%cr%d", idx);
-	} else if (operand_is_dbg_reg(opnd)) {
-		int idx = X86_MODRM_REG(insn->modrm.bytes[0]);
-		return psnprintf(buf, len, "%%dr%d", idx);
-	} else if (operand_is_seg_reg(opnd)) {
-		int idx = X86_MODRM_REG(insn->modrm.bytes[0]);
-		return psnprintf(buf, len, "%%%s", segreg_map[idx]);
-	} else if (operand_is_mmxreg(opnd)) {
-		int idx = X86_MODRM_REG(insn->modrm.bytes[0]);
-		return psnprintf(buf, len, "%%mm%d", idx);
-	} else if (operand_is_xmmreg(opnd)) {
-		int idx = X86_MODRM_REG(insn->modrm.bytes[0]);
-		if (insn_rex_r_bit(insn))
-			idx += 8;
-		return psnprint_xmmreg(buf, len, opnd, insn, idx);
-	} else if (operand_is_xmm_vex(opnd)) {
-		int idx = 15 - insn_vex_v_bits(insn);
-		return psnprint_xmmreg(buf, len, opnd, insn, idx);
-	} else if (operand_is_xmm_imm(opnd)) {
-		int idx = (insn->immediate.bytes[0] >> 4);
-		return psnprint_xmmreg(buf, len, opnd, insn, idx);
-	} else if (operand_is_gpr_vex(opnd))
-		return disasm_vex_gpr(buf, len, opnd, end, insn);
-	else if (operand_is_fixmem(opnd))
-		return disasm_fixmem(buf, len, opnd, end, insn);
-	else if (operand_is_flags(opnd))
-		/* Ignore EFLAGS/RFLAGS */
-		return 0;
-	else /* Unknown type */
-		return psnprintf(buf, len, "(%.*s)", end - opnd, opnd);
+
+	disasm_op = get_addressing_method(opnd);
+	if (!disasm_op)	/* Unknown type */
+		return psnprintf(buf, len, "(bad:%.*s)", end - opnd, opnd);
+
+	return disasm_op(buf, len, opnd, insn);
 }
 
 /**
