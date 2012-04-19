@@ -32,12 +32,15 @@
 
 static int verbose;
 static bool x86_64 = (sizeof(long) == 8);
+static bool att = true;
 
 static void usage(void)
 {
 	fprintf(stderr, "Usage: bogodis [-6|-3] [-v]\n");
 	fprintf(stderr, "\t-6	64bit mode %s\n", (x86_64) ? "(default)" : "");
 	fprintf(stderr, "\t-3	32bit mode %s\n", (x86_64) ? "" : "(default)");
+	fprintf(stderr, "\t-i	Use Intel Syntax\n");
+	fprintf(stderr, "\t-a	Use AT&T Syntax\n");
 	fprintf(stderr, "\t-v	Increment verbosity\n");
 	exit(1);
 }
@@ -46,13 +49,19 @@ static void parse_args(int argc, char *argv[])
 {
 	int c;
 
-	while ((c = getopt(argc, argv, "63v")) != -1) {
+	while ((c = getopt(argc, argv, "63iav")) != -1) {
 		switch (c) {
 		case '6':
 			x86_64 = true;
 			break;
 		case '3':
 			x86_64 = false;
+			break;
+		case 'i':
+			att = false;
+			break;
+		case 'a':
+			att = true;
 			break;
 		case 'v':
 			verbose++;
@@ -113,10 +122,28 @@ static int read_instruction(FILE *fp, insn_byte_t *insn_buf, size_t size)
 	return i;
 }
 
+static int psnprintf(char **buf, size_t *len, const char *fmt, ...)
+{
+	va_list ap;
+	int ret;
+
+	va_start(ap, fmt);
+	ret = vsnprintf(*buf, *len, fmt, ap);
+	va_end(ap);
+	if (ret > 0 && ret < *len) {
+		*buf += ret;
+		*len -= ret;
+	} else
+		ret = -E2BIG;
+
+	return ret;
+}
+
 /* Disassemble options */
 #define DISASM_PR_ADDR	1	/* Print address */
 #define DISASM_PR_RAW	2	/* Print raw code */
 #define DISASM_PR_ALL	(DISASM_PR_ADDR | DISASM_PR_RAW)
+#define DISASM_PR_INTEL	4	/* Print in intel syntax */
 
 /**
  * snprint_assembly() - Disassemble given instruction with headers
@@ -129,6 +156,7 @@ static int read_instruction(FILE *fp, insn_byte_t *insn_buf, size_t size)
  * some optional information. Available option flagss are;
  * DISASM_PR_ADDR: the address of given instruction is added.
  * DISASM_PR_RAW:  the raw bytes of given instruction are added.
+ * DISASM_PR_INTEL: show in intel syntax
  * Caller must initialize @insn but don't need to decode (ex insn_get_length).
  */
 int snprint_assembly(char *buf, size_t len, struct insn *insn,
@@ -152,7 +180,10 @@ int snprint_assembly(char *buf, size_t len, struct insn *insn,
 	}
 
 	/* print assembly code */
-	ret = disassemble(buf, len, insn);
+	if (opts & DISASM_PR_INTEL)
+		ret = disassemble(buf, len, insn, DISASM_SYNTAX_INTEL);
+	else
+		ret = disassemble(buf, len, insn, DISASM_SYNTAX_ATT);
 	if (ret < 0)
 		return ret;
 	len -= ret;
@@ -182,9 +213,10 @@ int main(int argc, char *argv[])
 
 	while ((ret = read_instruction(stdin, insn_buf, MAX_INSN_SIZE)) > 0) {
 		insn_init(&insn, insn_buf, x86_64);
-		ret = snprint_assembly(buf, sizeof(buf), &insn, 0, DISASM_PR_ALL);
+		ret = snprint_assembly(buf, sizeof(buf), &insn, 0,
+			DISASM_PR_ALL | (att ? 0 : DISASM_PR_INTEL));
 		if (ret < 0) {
-			printf("Error: reason %d\n", ret);
+			printf("Error: reason %s\n", strerror(-ret));
 			if (verbose)
 				dump_insn(stdout, &insn);
 		} else {
