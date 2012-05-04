@@ -285,6 +285,19 @@ function get_operand(opnd,	i,count,f8,opnds) {
 			opcode = "call"
 		if (match(opcode, "^ret.*"))
 			opcode = "ret"
+		# chose mnemonic for objdump compatibility
+		if (opcode == "jnb") opcode = "jae"
+		if (opcode == "jz") opcode = "je"
+		if (opcode == "jnz") opcode = "jne"
+		if (opcode == "jnbe") opcode = "ja"
+		if (opcode == "jnl") opcode = "jge"
+		if (opcode == "jnle") opcode = "jg"
+
+		# special cases - opcode depends on operand-size
+		if (opcode == "cbw")	# cbw/cwde/cdqe
+			opcode = "%w:cbw|%d:cwde|%q:cdqe"
+		if (opcode == "cwd")	# cwd/cdq/cqo
+			opcode = "%w:cwd|%d:cdq|%q:cqo"
 
 		# additional flags
 		if (match(ext, only64_expr))

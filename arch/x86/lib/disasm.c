@@ -214,6 +214,8 @@ static int __disasm_gpr(struct disasm_buffer *dbuf, const char *opnd,
 		return psnprint_gpr8(dbuf, idx);
 	case 'w':
 		return psnprint_gpr16(dbuf, idx);
+	case 'd':
+		return psnprint_gpr32(dbuf, idx);
 	case 'l':
 		if (insn->opnd_bytes == 8)
 			return psnprint_gpr64(dbuf, idx);
@@ -252,7 +254,7 @@ static int disasm_opcode_gpr(struct disasm_buffer *dbuf, const char *opnd,
 			     struct insn *insn)
 {
 	int idx = X86_OPCODE_GPR(insn->opcode.bytes[insn->opcode.nbytes - 1]);
-	if (insn_rex_r_bit(insn))
+	if (insn_rex_b_bit(insn))
 		idx += 8;
 	return __disasm_gpr(dbuf, opnd, insn, idx);
 }

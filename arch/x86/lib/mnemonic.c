@@ -6,19 +6,34 @@
 /* Define mnemonic lookup table */
 #include "mnemonic-tables.c"
 
-static const char *get_variant(const char *fmt, struct insn *insn)
+static const char *__get_variant(const char *fmt, char *pfx)
 {
 	const char *p;
 
+	p = strstr(fmt, pfx);
+	if (!p)
+		return fmt;
+	return strchr(p, ':') + 1;
+}
+
+static const char *get_variant(const char *fmt, struct insn *insn)
+{
 	if (!fmt)
 		goto out;
 
-	if (insn->x86_64) {
-		p = strstr(fmt, "%6");
-		if (!p)
-			goto out;
-		fmt = strchr(p, ':') + 1;
-	} else if (strstr(fmt, "%6") == fmt)
+	if (*fmt == '%' && strchr("wdq", fmt[1])) {
+		if (insn->opnd_bytes == 2)
+			fmt = __get_variant(fmt, "%w");
+		else if (insn->opnd_bytes == 4)
+			fmt = __get_variant(fmt, "%d");
+		else if (insn->opnd_bytes == 8)
+			fmt = __get_variant(fmt, "%q");
+		goto out;
+	}
+
+	if (insn->x86_64)
+		fmt = __get_variant(fmt, "%6");
+	else if (strstr(fmt, "%6") == fmt)
 		fmt = NULL;
 out:
 	return fmt;
