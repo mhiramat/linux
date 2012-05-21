@@ -10,7 +10,7 @@ BEGIN {
 	prev_addr = ""
 	prev_hex = ""
 	prev_mnemonic = ""
-	bad_expr = "(\\(bad\\)|^rex|^.byte|^rep(z|nz)$|^lock$|^es$|^cs$|^ss$|^ds$|^fs$|^gs$|^data(16|32)$|^addr(16|32|64))"
+	bad_expr = "(\\(bad\\)|^rex|^\.byte|^repz|^repnz|^lock$|^es$|^cs$|^ss$|^ds$|^fs$|^gs$|^data(16|32)$|^addr(16|32|64))"
 	fwait_expr = "^9b "
 	fwait_str="9b\tfwait"
 }
@@ -32,6 +32,12 @@ BEGIN {
 		# Skip bad instructions
 		if (match(prev_mnemonic, bad_expr))
 			prev_addr = ""
+		gsub("repz", "rep", prev_mnemonic)
+		gsub("movabs", "mov", prev_mnemonic)
+		gsub("xchg[\t ]*[er]*ax,[er]*ax", "nop", prev_mnemonic)
+		gsub("data(32|16)", "", prev_mnemonic)
+		gsub("addr(64|32|16)", "", prev_mnemonic)
+		gsub("OWORD", "XMMWORD", prev_mnemonic)
 		# Split fwait from other f* instructions
 		if (match(prev_hex, fwait_expr) && prev_mnemonic != "fwait") {
 			printf "%s\t%s\n", prev_addr, fwait_str

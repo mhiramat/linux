@@ -231,9 +231,10 @@ int main(int argc, char *argv[])
 	insn_byte_t insn_buf[MAX_INSN_SIZE];
 	struct insn insn;
 	char buf[128], *lbuf;
-	const char *grp;
+	const char *grp = NULL;
 	unsigned long addr;
 	int ret;
+	int hint;
 
 	parse_args(argc, argv);
 
@@ -260,7 +261,9 @@ int main(int argc, char *argv[])
 			free(lbuf);
 			if (verbose >= 2) {
 				printf("format: %s\n",
-					get_mnemonic_format(&insn, &grp));
+					get_mnemonic_format(&insn, &grp, &hint));
+				if (grp)
+					printf("format grp: %s\n", grp);
 				dump_insn(stdout, &insn);
 			}
 		}

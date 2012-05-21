@@ -208,10 +208,15 @@ static int __disasm_gpr(struct disasm_buffer *dbuf, const char *opnd,
 {
 	switch (opnd[1]) {
 	case 'b':
-		return psnprint_gpr8(dbuf, idx);
+		if (insn->rex_prefix.nbytes)
+			return psnprint_gpr8_rex(dbuf, idx);
+		else
+			return psnprint_gpr8(dbuf, idx);
 	case 'w':
 		return psnprint_gpr16(dbuf, idx);
 	case 'd':
+		if (opnd[0] == 'R' && insn->x86_64)	/* Special case */
+			return psnprint_gpr64(dbuf, idx);
 		return psnprint_gpr32(dbuf, idx);
 	case 'l':
 		if (insn->opnd_bytes == 8)
@@ -363,17 +368,22 @@ static int disasm_segment_prefix(struct disasm_buffer *dbuf, struct insn *insn)
 static int disasm_displacement(struct disasm_buffer *dbuf, struct insn *insn)
 {
 	__disasm_segment_prefix(dbuf, insn, INAT_PFX_DS);
-	return disasm_printf(dbuf, "0x%x", insn->displacement.value);
+	if (insn->addr_bytes == 8)
+		return disasm_printf(dbuf, "0x%llx", (long long)insn->displacement.value);
+	else
+		return disasm_printf(dbuf, "0x%x", insn->displacement.value);
 }
 
 static int disasm_rip_relative(struct disasm_buffer *dbuf, struct insn *insn)
 {
+	long long disp = (long)insn->displacement.value;
+
+	if (!insn->x86_64)
+		disp &= 0xffffffff;
 	if (disasm_syntax_intel(dbuf))
-		return disasm_printf(dbuf, "[rip+0x%x]",
-				     insn->displacement.value);
+		return disasm_printf(dbuf, "[rip+0x%llx]", disp);
 	else
-		return disasm_printf(dbuf, "0x%x(%rip)",
-				     insn->displacement.value);
+		return disasm_printf(dbuf, "0x%llx(%rip)", disp);
 }
 
 static int disasm_sib_intel(struct disasm_buffer *dbuf, struct insn *insn,
@@ -383,7 +393,7 @@ static int disasm_sib_intel(struct disasm_buffer *dbuf, struct insn *insn,
 	if (mod != 0 || base != 5)	/* With base */
 		__disasm_gprea(dbuf, insn, base + rexb);
 
-	if (index != 4)	{	/* With scale * index */
+	if (index + rexx != 4)	{	/* With scale * index */
 		if (mod != 0 || base != 5)	/* With base */
 			disasm_printf(dbuf, "+");
 		__disasm_gprea(dbuf, insn, index + rexx);
@@ -409,7 +419,7 @@ static int disasm_sib(struct disasm_buffer *dbuf, struct insn *insn, int mod)
 	int rexx = insn_rex_x_bit(insn) ? 8 : 0;
 
 	/* Check the case which has just a displacement */
-	if (mod == 0 && index == 4 && base == 5)
+	if (mod == 0 && index == 4 && base == 5 && rexx == 0)
 		return disasm_displacement(dbuf, insn);
 
 	disasm_segment_prefix(dbuf, insn);
@@ -427,7 +437,7 @@ static int disasm_sib(struct disasm_buffer *dbuf, struct insn *insn, int mod)
 	if (mod != 0 || base != 5)	/* With base */
 		__disasm_gprea(dbuf, insn, base + rexb);
 
-	if (index != 4)	{	/* With scale * index */
+	if (index + rexx != 4)	{	/* With scale * index */
 		disasm_printf(dbuf, ",");
 		__disasm_gprea(dbuf, insn, index + rexx);
 		disasm_printf(dbuf, ",%x", 1 << scale);
@@ -476,7 +486,7 @@ static int disasm_modrm_mem(struct disasm_buffer *dbuf, const char *opnd,
 	/* Memory addressing */
 	if (disasm_syntax_intel(dbuf))
 		/* Since LEA doesn't use operand as a pointer, skip it */
-		if (insn->opcode.bytes[0] != X86_LEA_OPCODE)
+		if (isalpha(opnd[1]) && opnd[1] != 's')
 			disasm_pointer_prefix(dbuf, opnd, insn);
 
 	if (insn->sib.nbytes)	/* SIB addressing */
@@ -553,20 +563,24 @@ static int disasm_imm_xmm(struct disasm_buffer *dbuf, const char *opnd,
 	return psnprint_xmmreg(dbuf, opnd, insn, idx);
 }
 
+static void get_imm64_value(struct insn *insn, unsigned long long *imm)
+{
+	*imm = insn_field_get_uval(&insn->immediate2);
+	*imm <<= 32;
+	*imm += insn_field_get_uval(&insn->immediate);
+}
+
 static int disasm_immediate(struct disasm_buffer *dbuf, const char *opnd,
 			    struct insn *insn)
 {
-	long long imm;
+	unsigned long long imm;
 	int size;
 
 	if (inat_has_moffset(insn->attr) && insn->addr_bytes == 8) {
 		/* 64bit memory offset */
-		unsigned long long moffs;
-		moffs = insn_field_get_uval(&insn->immediate2);
-		moffs <<= 32;
-		moffs += insn_field_get_uval(&insn->immediate);
+		get_imm64_value(insn, &imm);
 		__disasm_segment_prefix(dbuf, insn, INAT_PFX_DS);
-		return disasm_printf(dbuf, "0x%llx", moffs);
+		return disasm_printf(dbuf, "0x%llx", imm);
 	}
 
 	/* Immediates are sign-extended */
@@ -582,15 +596,17 @@ static int disasm_immediate(struct disasm_buffer *dbuf, const char *opnd,
 	size = insn->opnd_bytes;
 	if (opnd[1] == 'B')	/* Forcibly 8bit cast */
 		size = 1;
+	if (opnd[1] == 'v' && size == 8)
+		get_imm64_value(insn, &imm);
 	switch (size) {
 	case 8:
 		return disasm_printf(dbuf, "0x%llx", imm);
 	case 4:
 		return disasm_printf(dbuf, "0x%x", (unsigned int)imm);
 	case 2:
-		return disasm_printf(dbuf, "0x%x", (unsigned short)imm);
+		return disasm_printf(dbuf, "0x%x", (unsigned short)imm & 0xffff);
 	default:
-		return disasm_printf(dbuf, "0x%x", (unsigned char)imm);
+		return disasm_printf(dbuf, "0x%x", (unsigned char)imm & 0xff);
 	}
 }
 
@@ -622,24 +638,26 @@ static int disasm_reg_regs(struct disasm_buffer *dbuf, const char *opnd,
 	if (insn_rex_r_bit(insn))
 		idx += 8;
 
-	if (operand_is_gpr_reg(opnd)) {
-		if (insn->rex_prefix.nbytes && opnd[1] == 'b')
-			return psnprint_gpr8_rex(dbuf, idx);
-		else
-			return __disasm_gpr(dbuf, opnd, insn, idx);
-	}
+	if (operand_is_gpr_reg(opnd))
+		return __disasm_gpr(dbuf, opnd, insn, idx);
 
 	if (operand_is_xmm_reg(opnd))
 		return psnprint_xmmreg(dbuf, opnd, insn, idx);
 
-	if (idx > 7 && !(operand_is_dbg_reg(opnd) && idx == 8))
-		goto err;
-
-	if (operand_is_ctl_reg(opnd))
+	if (operand_is_ctl_reg(opnd)) {
+		if (idx == 1 || (idx > 4 && idx != 8))
+			goto err;
 		return disasm_printreg(dbuf, "cr%d", idx);
-	else if (operand_is_dbg_reg(opnd))
-		return disasm_printreg(dbuf, "dr%d", idx);
-	else if (operand_is_seg_reg(opnd))
+	} else if (operand_is_dbg_reg(opnd)) {
+		if (idx == 4 || idx == 5 || idx > 7)
+			goto err;
+		/* Debug registers name dbX in objdump */
+		return disasm_printreg(dbuf, "db%d", idx);
+	}
+
+	if (idx > 7)
+		goto err;
+	if (operand_is_seg_reg(opnd))
 		return disasm_printreg(dbuf, "%s", segreg_map[idx]);
 	else if (operand_is_mmx_reg(opnd))
 		return disasm_printreg(dbuf, "mm%d", idx);
@@ -797,15 +815,15 @@ int disassemble(char *buf, size_t len, struct insn *insn, int syntax)
 	const char *grp_fmt = NULL;
 	const char *prefix;
 	const char *p, *q = NULL;
-	int ret;
+	int ret = 0;
 
 	/* Get the mnemonic format of given instruction */
-	mn_fmt = get_mnemonic_format(insn, &grp_fmt);
+	mn_fmt = get_mnemonic_format(insn, &grp_fmt, &ret);
 	if (!mn_fmt)
 		return -ENOENT;
 
 	/* Put a prefix if exist */
-	prefix = get_prefix_name(insn);
+	prefix = get_prefix_name(insn, ret);
 	if (prefix) {
 		ret = disasm_printf(&dbuf, "%s ", prefix);
 		if (ret < 0)
@@ -817,7 +835,7 @@ int disassemble(char *buf, size_t len, struct insn *insn, int syntax)
 	if (grp_fmt) {	/* Group opcode */
 		q = strpbrk(grp_fmt, " |");
 		mn_fmt = grp_fmt;
-		if (!p)	/* No group operand. use individual operand */
+		if (q && *q != '|')	/* Has individual operand, use it */
 			p = q;
 	}
 

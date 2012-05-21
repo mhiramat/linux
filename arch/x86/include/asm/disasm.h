@@ -2,9 +2,12 @@
 #define __X86_DISASM_H__
 #include <asm/insn.h>
 
+/* Consumed the last prefix for variant */
+#define DISASM_HINT_VARIANT 1
+
 /* Mnemonic format table lookup routines */
-extern const char *get_mnemonic_format(struct insn *insn, const char **grp);
-extern const char *get_prefix_name(struct insn *insn);
+extern const char *get_mnemonic_format(struct insn *insn, const char **grp, int *hint);
+extern const char *get_prefix_name(struct insn *insn, int hint);
 
 #define DISASM_STR_LEN	128
 

@@ -16,24 +16,50 @@ static const char *__get_variant(const char *fmt, char *pfx)
 	return strchr(p, ':') + 1;
 }
 
+static const char *__get_variant_rm(const char *fmt, struct insn *insn)
+{
+	int rm = X86_MODRM_RM(insn->modrm.bytes[0]);
+	char buf[5] = {
+		[0] = '%',
+		[1] = (rm & 0x4) ? '1' : '0',
+		[2] = (rm & 0x2) ? '1' : '0',
+		[3] = (rm & 0x1) ? '1' : '0',
+		[4] = '\0'};
+	return __get_variant(fmt, buf);
+}
+
 static const char *get_variant(const char *fmt, struct insn *insn)
 {
+	char *p, *q;
+
 	if (!fmt)
 		goto out;
 
-	if (*fmt == '%' && strchr("wdq", fmt[1])) {
-		if (insn->opnd_bytes == 2)
-			fmt = __get_variant(fmt, "%w");
-		else if (insn->opnd_bytes == 4)
-			fmt = __get_variant(fmt, "%d");
-		else if (insn->opnd_bytes == 8)
-			fmt = __get_variant(fmt, "%q");
-		goto out;
+	p = strchr(fmt, '%');
+	if (p) {
+		if (insn->modrm.nbytes &&
+		    X86_MODRM_MOD(insn->modrm.bytes[0]) == 3) {
+			q = strstr(fmt, "%11B");
+			if (q) {
+				fmt = __get_variant_rm(q, insn);
+				if (q == fmt)
+					fmt = strchr(q, ':') + 1;
+			}
+		}
+		if (strchr("wdq", p[1])) {
+			if (insn->opnd_bytes == 2)
+				fmt = __get_variant(fmt, "%w");
+			else if (insn->opnd_bytes == 4)
+				fmt = __get_variant(fmt, "%d");
+			else if (insn->opnd_bytes == 8)
+				fmt = __get_variant(fmt, "%q");
+			goto out;
+		}
 	}
 
 	if (insn->x86_64)
-		fmt = __get_variant(fmt, "%6");
-	else if (strstr(fmt, "%6") == fmt)
+		fmt = __get_variant(fmt, "%e");
+	else if (fmt[0] == '%' && fmt[1] == 'e')
 		fmt = NULL;
 
 	if (fmt && fmt[0] == 'v' && inat_accept_vex(insn->attr) && !insn_is_avx(insn))
@@ -42,7 +68,7 @@ out:
 	return fmt;
 }
 
-const char *get_mnemonic_format(struct insn *insn, const char **grp)
+const char *get_mnemonic_format(struct insn *insn, const char **grp, int *hint)
 {
 	insn_attr_t attr;
 	const char *ret = NULL;
@@ -73,14 +99,17 @@ const char *get_mnemonic_format(struct insn *insn, const char **grp)
 		table = mnemonic_primary_tables[m];
 		if (!table || !table[idx])
 			table = mnemonic_primary_tables[0];
+		else
+			*hint |= DISASM_HINT_VARIANT;
 		/* Solve escapes */
 		while (inat_is_escape(attr)) {
 			n = inat_escape_id(attr);
 			idx = *++bytes;
 			attr = inat_get_escape_attribute(idx, 0, attr);
-			if (inat_has_variant(attr))
+			if (inat_has_variant(attr)) {
 				table = mnemonic_escape_tables[n][m];
-			else
+				*hint |= DISASM_HINT_VARIANT;
+			} else
 				table = mnemonic_escape_tables[n][0];
 		}
 	}
@@ -92,9 +121,10 @@ const char *get_mnemonic_format(struct insn *insn, const char **grp)
 		n = inat_group_id(attr);
 		idx = insn->modrm.bytes[0];
 		attr = inat_get_group_attribute(idx, 0, attr);
-		if (inat_has_variant(attr))
+		if (inat_has_variant(attr)) {
+			*hint |= DISASM_HINT_VARIANT;
 			table = mnemonic_group_tables[n][m];
-		else
+		} else
 			table = mnemonic_group_tables[n][0];
 		idx = X86_MODRM_REG(idx);
 		*grp = get_variant(table[idx], insn);
@@ -105,7 +135,7 @@ fail:
 	return NULL;
 }
 
-const char *get_prefix_name(struct insn *insn)
+const char *get_prefix_name(struct insn *insn, int hint)
 {
 	int i = 0;
 	insn_attr_t attr;
@@ -113,6 +143,8 @@ const char *get_prefix_name(struct insn *insn)
 	for (i = 0; i < insn->prefixes.nbytes; i++) {
 		attr = inat_get_opcode_attribute(insn->prefixes.bytes[i]);
 		attr &= INAT_PFX_MASK;
+		if ((hint & DISASM_HINT_VARIANT) && inat_last_prefix_id(attr) != 0)
+			continue;	/* this already used for variants */
 		if (attr == INAT_PFX_REPE ||
 		    attr == INAT_PFX_REPNE ||
 		    attr == INAT_PFX_LOCK)

@@ -210,6 +210,8 @@ function get_operand(opnd,	i,count,f8,opnds) {
 			opnds[i] = tolower(opnds[i])
 		} else if (match(opnds[i], vregs_expr))
 			opnds[i] = "_" tolower(opnds[i])
+		else if (match(opnds[i], "^[ERG]b"))
+			f8 = 1
 	}
 
 	for (i = count; i > 0; i--) {
@@ -286,23 +288,48 @@ function get_operand(opnd,	i,count,f8,opnds) {
 		if (match(opcode, "^ret.*"))
 			opcode = "ret"
 		# chose mnemonic for objdump compatibility
-		if (opcode == "jnb") opcode = "jae"
-		if (opcode == "jz") opcode = "je"
-		if (opcode == "jnz") opcode = "jne"
-		if (opcode == "jnbe") opcode = "ja"
-		if (opcode == "jnl") opcode = "jge"
-		if (opcode == "jnle") opcode = "jg"
+		if (match(opcode, "(j|cmov|set)nb$")) sub("nb", "ae",opcode)
+		if (match(opcode, "(j|cmov|set)z")) sub("z", "e",opcode)
+		if (match(opcode, "(j|cmov|set)nz")) sub("z", "e",opcode)
+		if (match(opcode, "(j|cmov|set)nbe")) sub("nbe", "a",opcode)
+		if (match(opcode, "(j|cmov|set)nl$")) sub("nl", "ge",opcode)
+		if (match(opcode, "(j|cmov|set)nle")) sub("nle", "g",opcode)
 
 		# special cases - opcode depends on operand-size
 		if (opcode == "cbw")	# cbw/cwde/cdqe
 			opcode = "%w:cbw|%d:cwde|%q:cdqe"
 		if (opcode == "cwd")	# cwd/cdq/cqo
 			opcode = "%w:cwd|%d:cdq|%q:cqo"
+		if (opcode == "cmpxchg16b")
+			opcode = "%q:cmpxchg16b"
+		# According to Intel SDM 3.2 and compatible with objdump,
+		# movs of segment register are special instructions.
+		# register will be word, double word or quad word, and
+		# memory bitwidth is only 16 or 64.
+		if (opcode == "mov" && opnd == "Ew,Sw") {
+			opcode = "mov Mw,Sw|%11B:mov Rv,Sw|%q:mov Eq,Sw"
+			opnd = ""
+		}
+		if (opcode == "mov" && opnd == "Sw,Ev") {
+			opcode = "mov Sw,Mw|%11B:mov Sw,Rv|%q:mov Sw,Eq"
+			opnd = ""
+		}
+		# According to Intel SDM 3.2/4.2, (F)xsave/xrstor has 64bit
+		# variants when operand size = 64
+		if (match(opcode, "f*x(save|rstor)$"))
+			opcode = opcode " M|%q:" opcode "64"
 
 		# additional flags
-		if (match(ext, only64_expr))
-			pfx = "%6:"
-
+		if (match(ext, only64_expr)) {
+			if (!match(opcode, "swapgs"))
+				pfx = "%e"
+		}
+		if (match(ext, "11B"))
+			pfx = pfx "%11B"
+		if (j = match(ext, "[01][01][01]"))
+			pfx = pfx "%" substr(ext, j, 3)
+		if (pfx != "")
+			pfx = pfx ":"
 		if (length(opnd) != 0)
 			flags = "\"" pfx opcode " " opnd "\""
 		else
