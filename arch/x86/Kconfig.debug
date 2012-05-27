@@ -172,6 +172,15 @@ config X86_DECODER_SELFTEST
 	 decoder code.
 	 If unsure, say "N".
 
+config X86_DISASSEMBLER
+	bool "Enable x86 instruction disassembler"
+	depends on INSTRUCTION_DECODER
+	---help---
+	 This option enables x86 instruction disassembler code in kernel.
+	 This will show disassembled code on console when you hit a bug or
+	 kernel panic.
+	 If unsure, say "Y" here, since this will help you to report bugs.
+
 #
 # IO delay types:
 #

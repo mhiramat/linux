@@ -82,6 +82,7 @@ struct insn {
 #define X86_REX_R(rex) ((rex) & 4)
 #define X86_REX_X(rex) ((rex) & 2)
 #define X86_REX_B(rex) ((rex) & 1)
+#define X86_REX_WRXB(rex) ((rex) & 0xf)
 
 #define X86_OPCODE_GPR(opcode) ((opcode) & 0x07)
 
@@ -156,6 +157,49 @@ static inline insn_byte_t insn_vex_p_bits(struct insn *insn)
 		return X86_VEX_P(insn->vex_prefix.bytes[2]);
 }
 
+static inline insn_byte_t insn_vex_l_bit(struct insn *insn)
+{
+	if (insn->vex_prefix.nbytes == 2)	/* 2 bytes VEX */
+		return X86_VEX_L(insn->vex_prefix.bytes[1]);
+	else
+		return X86_VEX_L(insn->vex_prefix.bytes[2]);
+}
+
+static inline insn_byte_t insn_vex_v_bits(struct insn *insn)
+{
+	if (insn->vex_prefix.nbytes == 2)	/* 2 bytes VEX */
+		return X86_VEX_V(insn->vex_prefix.bytes[1]);
+	else
+		return X86_VEX_V(insn->vex_prefix.bytes[2]);
+}
+
+static inline insn_byte_t insn_rex_b_bit(struct insn *insn)
+{
+	if (insn->vex_prefix.nbytes == 3)	/* 3 bytes VEX */
+		return !X86_VEX_B(insn->vex_prefix.bytes[1]);
+	else if (insn->rex_prefix.nbytes)
+		return X86_REX_B(insn->rex_prefix.bytes[0]);
+	return 0;
+}
+
+static inline insn_byte_t insn_rex_x_bit(struct insn *insn)
+{
+	if (insn->vex_prefix.nbytes == 3)	/* 3 bytes VEX */
+		return !X86_VEX_X(insn->vex_prefix.bytes[1]);
+	else if (insn->rex_prefix.nbytes)
+		return X86_REX_X(insn->rex_prefix.bytes[0]);
+	return 0;
+}
+
+static inline insn_byte_t insn_rex_r_bit(struct insn *insn)
+{
+	if (insn->vex_prefix.nbytes == 3)	/* 3 bytes VEX */
+		return !X86_VEX_R(insn->vex_prefix.bytes[1]);
+	else if (insn->rex_prefix.nbytes)
+		return X86_REX_R(insn->rex_prefix.bytes[0]);
+	return 0;
+}
+
 /* Get the last prefix id from last prefix or VEX prefix */
 static inline int insn_last_prefix_id(struct insn *insn)
 {
@@ -165,6 +209,19 @@ static inline int insn_last_prefix_id(struct insn *insn)
 	if (insn->prefixes.bytes[3])
 		return inat_get_last_prefix_id(insn->prefixes.bytes[3]);
 
+	return 0;
+}
+
+static inline insn_attr_t insn_has_segment_prefix(struct insn *insn)
+{
+	insn_attr_t attr;
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		attr = inat_get_opcode_attribute(insn->prefixes.bytes[i]);
+		if (inat_is_segment_prefix(attr))
+			return attr;
+	}
 	return 0;
 }
 
