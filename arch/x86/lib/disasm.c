@@ -7,7 +7,9 @@
 #include <linux/string.h>
 #include <linux/ctype.h>
 #include <linux/errno.h>
+#ifdef __KERNEL__
 #include <linux/kallsyms.h>
+#endif
 
 #include <asm/disasm.h>
 
@@ -54,8 +56,10 @@ static int disasm_printsym(struct disasm_buffer *dbuf, unsigned long addr)
 	int ret;
 
 	ret = disasm_printf(dbuf, "%lx", addr);
+#ifdef __KERNEL__
 	if (ret > 0)
 		ret = disasm_printf(dbuf, " <%pS>", addr);
+#endif
 	return ret;
 }
 
