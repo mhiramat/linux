@@ -257,6 +257,8 @@ void insn_get_modrm(struct insn *insn)
 
 	if (insn->x86_64 && inat_is_force64(insn->attr))
 		insn->opnd_bytes = 8;
+	if (insn->x86_64 && inat_is_default64(insn->attr) && insn->opnd_bytes == 4)
+		insn->opnd_bytes = 8;
 	modrm->got = 1;
 
 err_out:
