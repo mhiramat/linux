@@ -858,25 +858,32 @@ static int kdb_disasm_printk(unsigned long addr, unsigned long *next)
 	return 0;
 }
 
-int kdb_show_disasm(unsigned long addr, size_t len)
+unsigned long kdb_show_disasm(unsigned long addr, unsigned long len)
 {
-	unsigned long offs, eaddr = addr + len;
+	unsigned long offs;
 	char buf[KSYM_NAME_LEN] = {0};
 	char *modname;
+	unsigned long i;
 
 	addr = find_instruction_boundary(addr, &offs, &modname, buf);
 	if (!addr)
-		return KDB_BADADDR;
+		return 0;
 
 	if (modname)
 		kdb_printf("<%s+0x%lx [%s]>:\n", buf, offs, modname);
 	else
 		kdb_printf("<%s+0x%lx>:\n", buf, offs);
 
-	do {
-		kdb_disasm_printk(addr, &addr);
-	} while (addr < eaddr);
+	if (len == 0)
+		len = 20;
 
-	return 0;
+	for (i = 0; i < len; i++) {
+		if (KDB_FLAG(CMD_INTERRUPT))
+			return 0;
+		if (kdb_disasm_printk(addr, &addr))
+			return 0;
+	}
+
+	return addr;
 }
 #endif

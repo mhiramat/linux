@@ -2606,9 +2606,9 @@ static int kdb_per_cpu(int argc, const char **argv)
 	return 0;
 }
 
-int __weak kdb_show_disasm(unsigned long addr, size_t len)
+unsigned long __weak kdb_show_disasm(unsigned long addr, unsigned long len)
 {
-	return KDB_NOTIMP;
+	return 0;
 }
 
 /*
@@ -2616,6 +2616,8 @@ int __weak kdb_show_disasm(unsigned long addr, size_t len)
  */
 static int kdb_dis(int argc, const char **argv)
 {
+	static unsigned long next_addr;
+	static unsigned long next_len;
 	int diag;
 	unsigned long addr;
 	long offset = 0;
@@ -2625,18 +2627,30 @@ static int kdb_dis(int argc, const char **argv)
 	if (argc > 3)
 		return KDB_ARGCOUNT;
 
-	nextarg = 1;
-	diag = kdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL);
-	if (diag)
-		return diag;
+	if (argc == 0) {
+		if (next_addr == 0)
+			return KDB_NOTFOUND;
+		addr = next_addr;
+		len = next_len;
+	} else {
+		nextarg = 1;
+		diag = kdbgetaddrarg(argc, argv, &nextarg, &addr, &offset, NULL);
+		if (diag)
+			return diag;
 
-	if (argc == 2) {
-		if (kstrtoul(argv[2], 0, &len) < 0)
-			return KDB_BADINT;
-	} else
-		len = 0;
+		if (argc == 2) {
+			if (kstrtoul(argv[2], 0, &len) < 0)
+				return KDB_BADINT;
+		} else
+			len = 0;
+	}
 
-	return kdb_show_disasm(addr + offset, (size_t)len);
+	addr = kdb_show_disasm(addr + offset, len);
+
+	next_addr = addr;
+	next_len = len;
+
+	return 0;
 }
 
 /*
@@ -2869,7 +2883,7 @@ static void __init kdb_inittab(void)
 	kdb_register_repeat("grephelp", kdb_grep_help, "",
 	  "Display help on | grep", 0, KDB_REPEAT_NONE);
 	kdb_register_repeat("dis", kdb_dis, "<addr> [<len>]",
-	  "Display disassmbled code", 2, KDB_REPEAT_NONE);
+	  "Display disassmbled code", 2, KDB_REPEAT_NO_ARGS);
 }
 
 /* Execute any commands defined in kdb_cmds.  */
