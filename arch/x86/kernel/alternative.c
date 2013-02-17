@@ -11,6 +11,7 @@
 #include <linux/memory.h>
 #include <linux/stop_machine.h>
 #include <linux/slab.h>
+#include <linux/kgdb.h>
 #include <asm/alternative.h>
 #include <asm/sections.h>
 #include <asm/pgtable.h>
@@ -689,4 +690,34 @@ void __kprobes text_poke_smp_batch(struct text_poke_param *params, int n)
 	atomic_set(&stop_machine_first, 1);
 	wrote_text = 0;
 	__stop_machine(stop_machine_text_poke, (void *)&tpp, cpu_online_mask);
+}
+
+/**
+ * recover_instruction - Recover instruction which has been modified
+ * @addr: an address on which the original instruction was there
+ * @buf: a buffer in which recovered instruction will be stored. Note that
+ *       this buffer must be bigger than MAX_INSN_SIZE.
+ *
+ * Try to recover the instruction if a subsystem knows original one. If the
+ * instruction at @addr is not modified, this returns given @addr.
+ *
+ * Note: Must be called under text_mutex is locked.
+ */
+void *recover_instruction(void *buf, void *addr)
+{
+#ifdef CONFIG_KPROBES
+	void *ret;
+	ret = (void *)recover_probed_instruction(buf, (unsigned long)addr);
+	if (ret == buf)
+		return ret;
+#endif
+#ifdef CONFIG_KGDB
+	/* Recover if kgdb has put a breakpoint */
+	if (kgdb_get_saved_instr((unsigned long)addr, buf)) {
+		memcpy(buf + BREAK_INSTR_SIZE, addr + BREAK_INSTR_SIZE,
+			(MAX_INSN_SIZE - BREAK_INSTR_SIZE));
+		return buf;
+	}
+#endif
+	return addr;
 }

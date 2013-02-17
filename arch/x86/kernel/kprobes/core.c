@@ -280,7 +280,7 @@ static int __kprobes can_probe(unsigned long paddr)
 		 * relative-jump. Since the relative-jump itself is
 		 * normally used, we just go through if there is no kprobe.
 		 */
-		__addr = recover_probed_instruction(buf, addr);
+		__addr = (unsigned long)recover_instruction(buf, (void *)addr);
 		kernel_insn_init(&insn, (void *)__addr);
 		insn_get_length(&insn);
 
@@ -327,7 +327,7 @@ int __kprobes __copy_instruction(u8 *dest, u8 *src)
 	struct insn insn;
 	kprobe_opcode_t buf[MAX_INSN_SIZE];
 
-	kernel_insn_init(&insn, (void *)recover_probed_instruction(buf, (unsigned long)src));
+	kernel_insn_init(&insn, recover_instruction(buf, src));
 	insn_get_length(&insn);
 	/* Another subsystem puts a breakpoint, failed to recover */
 	if (insn.opcode.bytes[0] == BREAKPOINT_INSTRUCTION)
