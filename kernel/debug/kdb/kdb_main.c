@@ -2618,7 +2618,7 @@ static int kdb_dis(int argc, const char **argv)
 {
 	int diag;
 	unsigned long addr;
-	long offset;
+	long offset = 0;
 	int nextarg;
 	unsigned long len;
 
