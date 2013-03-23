@@ -1533,6 +1533,8 @@ extern int s390_enable_sie(void);
  */
 #define pgtable_cache_init()	do { } while (0)
 
+static inline void check_pgt_cache(void) { }
+
 #include <asm-generic/pgtable.h>
 
 #endif /* _S390_PAGE_H */
