@@ -84,8 +84,6 @@ show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 
 void show_regs(struct pt_regs *regs)
 {
-	int i;
-
 	__show_regs(regs, !user_mode_vm(regs));
 
 	pr_emerg("Process %.*s (pid: %d, ti=%p task=%p task.ti=%p)\n",
@@ -96,33 +94,11 @@ void show_regs(struct pt_regs *regs)
 	 * time of the fault..
 	 */
 	if (!user_mode_vm(regs)) {
-		unsigned int code_prologue = code_bytes * 43 / 64;
-		unsigned int code_len = code_bytes;
-		unsigned char c;
-		u8 *ip;
-
 		pr_emerg("Stack:\n");
 		show_stack_log_lvl(NULL, regs, &regs->sp, 0, KERN_EMERG);
 
 		pr_emerg("Code:");
-
-		ip = (u8 *)regs->ip - code_prologue;
-		if (ip < (u8 *)PAGE_OFFSET || probe_kernel_address(ip, c)) {
-			/* try starting at IP */
-			ip = (u8 *)regs->ip;
-			code_len = code_len - code_prologue + 1;
-		}
-		for (i = 0; i < code_len; i++, ip++) {
-			if (ip < (u8 *)PAGE_OFFSET ||
-					probe_kernel_address(ip, c)) {
-				pr_cont("  Bad EIP value.");
-				break;
-			}
-			if (ip == (u8 *)regs->ip)
-				pr_cont(" <%02x>", c);
-			else
-				pr_cont(" %02x", c);
-		}
+		show_code_dump(regs);
 	}
 	pr_cont("\n");
 }
