@@ -1,18 +1,25 @@
 #
 # Makefile for x86 specific library files.
 #
+x86_tables_maps = $(srctree)/arch/x86/lib/x86-opcode-map.txt
 
 inat_tables_script = $(srctree)/arch/x86/tools/gen-insn-attr-x86.awk
-inat_tables_maps = $(srctree)/arch/x86/lib/x86-opcode-map.txt
 quiet_cmd_inat_tables = GEN     $@
-      cmd_inat_tables = $(AWK) -f $(inat_tables_script) $(inat_tables_maps) > $@ || rm -f $@
-
-$(obj)/inat-tables.c: $(inat_tables_script) $(inat_tables_maps)
+      cmd_inat_tables = $(AWK) -f $(inat_tables_script) $(x86_tables_maps) > $@ || rm -f $@
+$(obj)/inat-tables.c: $(inat_tables_script) $(x86_tables_maps)
 	$(call cmd,inat_tables)
 
 $(obj)/inat.o: $(obj)/inat-tables.c
 
-clean-files := inat-tables.c
+mnemonic_tables_script = $(srctree)/arch/x86/tools/gen-insn-mnemonic-x86.awk
+quiet_cmd_mnemonic_tables = GEN     $@
+      cmd_mnemonic_tables = $(AWK) -f $(mnemonic_tables_script) $(x86_tables_maps) > $@ || rm -f $@
+$(obj)/mnemonic-tables.c: $(mnemonic_tables_script) $(x86_tables_maps)
+	$(call cmd,mnemonic_tables)
+
+$(obj)/mnemonic.o: $(obj)/mnemonic-tables.c
+
+clean-files := inat-tables.c mnemonic-tables.c
 
 obj-$(CONFIG_SMP) += msr-smp.o cache-smp.o
 
@@ -23,6 +30,7 @@ lib-y += memcpy_$(BITS).o
 lib-$(CONFIG_SMP) += rwlock.o
 lib-$(CONFIG_RWSEM_XCHGADD_ALGORITHM) += rwsem.o
 lib-$(CONFIG_INSTRUCTION_DECODER) += insn.o inat.o
+lib-$(CONFIG_X86_DISASSEMBLER) += disasm.o mnemonic.o
 
 obj-y += msr.o msr-reg.o msr-reg-export.o
 
