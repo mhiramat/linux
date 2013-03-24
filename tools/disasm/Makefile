@@ -27,6 +27,7 @@ tooldir := $(archdir)/tools
 libdir := $(archdir)/lib
 incdir := $(archdir)/include/asm
 
+EXTLIBS = -lelf
 CFLAGS := -g -Wall -I$(topdir)/include -I$(archdir)/include
 
 SRC += $(libdir)/insn.c
@@ -39,7 +40,7 @@ SRC += $(incdir)/insn.h
 SRC += $(incdir)/disasm.h
 
 ldisasm: disasm.c inat-tables.c mnemonic-tables.c $(SRC)
-	$(CC) $(CFLAGS) -o $@ disasm.c -I$(libdir) -I./
+	$(CC) $(CFLAGS) -o $@ disasm.c -I$(libdir) -I./ $(EXTLIBS)
 
 inat-tables.c: $(libdir)/x86-opcode-map.txt $(tooldir)/gen-insn-attr-x86.awk
 	$(AWK) -f $(tooldir)/gen-insn-attr-x86.awk $< > $@

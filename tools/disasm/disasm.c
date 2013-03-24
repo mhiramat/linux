@@ -34,10 +34,11 @@ static int verbose;
 static bool x86_64 = (sizeof(long) == 8);
 static bool att = true;
 static int lf_bytes = 7;
+static char *filename;
 
 static void usage(void)
 {
-	fprintf(stderr, "Usage: ldisasm [-6|-3] [-i|-a] [-l <NUM>] [-v]\n");
+	fprintf(stderr, "Usage: ldisasm [-6|-3] [-i|-a] [-l <NUM>] [-v] [file]\n");
 	fprintf(stderr, "\t-6	64bit mode %s\n", (x86_64) ? "(default)" : "");
 	fprintf(stderr, "\t-3	32bit mode %s\n", (x86_64) ? "" : "(default)");
 	fprintf(stderr, "\t-i	Use Intel Syntax\n");
@@ -79,6 +80,9 @@ static void parse_args(int argc, char *argv[])
 		fprintf(stderr, "Wrong Line feed bytes %d\n", lf_bytes);
 		usage();
 	}
+
+	if (optind < argc)
+		filename = strdup(argv[optind]);
 }
 
 static void dump_field(FILE *fp, const char *name, const char *indent,
@@ -225,6 +229,124 @@ int snprint_assembly(char *buf, size_t len, struct insn *insn,
 	return 0;
 }
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <gelf.h>
+
+Elf *elf_init(int fd)
+{
+	Elf *e;
+	GElf_Ehdr ehdr;
+
+	if (elf_version(EV_CURRENT) == EV_NONE) {
+		fprintf(stderr, "Failed to init libelf.\n");
+		return NULL;
+	}
+
+	e = elf_begin(fd, ELF_C_READ, NULL);
+	if (e == NULL) {
+		fprintf(stderr, "Failed begin libelf session.\n");
+		goto error;
+	}
+	if (elf_kind(e) != ELF_K_ELF) {
+		fprintf(stderr, "%s is not an ELF format file.\n", filename);
+		goto error;
+	}
+	if (gelf_getehdr(e, &ehdr) == NULL) {
+		fprintf(stderr, "Failed to get elf header.\n");
+		goto error;
+	}
+	if (ehdr.e_machine != EM_386 && ehdr.e_machine != EM_X86_64) {
+		fprintf(stderr, "%s is not intel x86 binary.\n", filename);
+		goto error;
+	}
+	if (gelf_getclass(e) == ELFCLASS32)
+		x86_64 = false;
+	else
+		x86_64 = true;
+
+	return e;
+error:
+	if (e)
+		elf_end(e);
+	return NULL;
+}
+
+int disasm_elf_section(Elf *e, Elf_Scn *scn, GElf_Shdr *shdr)
+{
+	size_t n = 0, strndx;
+	Elf_Data *data = NULL;
+	char *p;
+	struct insn insn;
+	char buf[256];
+	unsigned long addr;
+	int ret;
+
+	elf_getshdrstrndx(e, &strndx);
+	p = elf_strptr(e, strndx, shdr->sh_name);
+	printf("Section: \'%s\':\n", p);
+	while (n < shdr->sh_size) {
+		data = elf_getdata(scn, data);
+		if (!data)
+			break;
+		p = data->d_buf;
+		while (p < (char *)data->d_buf + data->d_size) {
+			insn_init(&insn, p, x86_64);
+			addr = shdr->sh_addr + p - (char *)data->d_buf;
+			ret = snprint_assembly(buf, sizeof(buf), &insn, addr,
+				DISASM_PR_ALL | (att ? 0 : DISASM_PR_INTEL));
+			if (ret < 0) {
+				printf("Error: reason %d\n", ret);
+				if (verbose)
+					dump_insn(stdout, &insn);
+			} else {
+				printf("%s", buf);
+			}
+			p += insn.length;
+		}
+	}
+	return 0;
+}
+
+int disasm_elf(void)
+{
+	int fd, ret = 0;
+	Elf *e;
+	Elf_Scn *scn;
+	GElf_Shdr shdr;
+
+	fd = open(filename, O_RDONLY, 0);
+	if (fd < 0) {
+		fprintf(stderr, "Failed to open %s (%d)\n", filename, fd);
+		ret = fd;
+		goto error;
+	}
+	e = elf_init(fd);
+	if (e == NULL) {
+		ret = -EINVAL;
+		goto error;
+	}
+	/* iterate sections */
+	for (scn = elf_nextscn(e, NULL); scn; scn = elf_nextscn(e, scn)) {
+		if (gelf_getshdr(scn, &shdr) != &shdr) {
+			fprintf(stderr, "Failed to get section header");
+			goto error;
+		}
+		if (shdr.sh_flags & SHF_EXECINSTR) {
+			ret = disasm_elf_section(e, scn, &shdr);
+			if (ret < 0)
+				break;
+		}
+	}
+error:
+	if (e)
+		elf_end(e);
+	if (fd >= 0)
+		close(fd);
+	return ret;
+}
+
 int main(int argc, char *argv[])
 {
 	insn_byte_t insn_buf[MAX_INSN_SIZE];
@@ -236,6 +358,9 @@ int main(int argc, char *argv[])
 	int hint;
 
 	parse_args(argc, argv);
+
+	if (filename)
+		return disasm_elf();
 
 	while ((ret = read_instruction(stdin, insn_buf,
 				       MAX_INSN_SIZE, &lbuf)) >= 0) {
