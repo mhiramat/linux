@@ -38,8 +38,8 @@ SRC += $(incdir)/inat.h
 SRC += $(incdir)/insn.h
 SRC += $(incdir)/disasm.h
 
-bogodis: bogodis.c inat-tables.c mnemonic-tables.c $(SRC)
-	$(CC) $(CFLAGS) -o $@ bogodis.c -I$(libdir) -I./
+ldisasm: disasm.c inat-tables.c mnemonic-tables.c $(SRC)
+	$(CC) $(CFLAGS) -o $@ disasm.c -I$(libdir) -I./
 
 inat-tables.c: $(libdir)/x86-opcode-map.txt $(tooldir)/gen-insn-attr-x86.awk
 	$(AWK) -f $(tooldir)/gen-insn-attr-x86.awk $< > $@
@@ -48,4 +48,4 @@ mnemonic-tables.c: $(libdir)/x86-opcode-map.txt $(tooldir)/gen-insn-mnemonic-x86
 	$(AWK) -f $(tooldir)/gen-insn-mnemonic-x86.awk $< > $@
 
 clean:
-	rm -f bogodis *.o inat-tables.c mnemonic-tables.c
+	rm -f ldisasm *.o inat-tables.c mnemonic-tables.c
