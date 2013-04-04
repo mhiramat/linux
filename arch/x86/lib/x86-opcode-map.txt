@@ -25,10 +25,10 @@
 #  (v1): this opcode only supports 128bit VEX.
 #
 # Last Prefix Superscripts
-#  - (66): the last prefix is 0x66
-#  - (F3): the last prefix is 0xF3
-#  - (F2): the last prefix is 0xF2
-#  - (!F3) : the last prefix is not 0xF3 (including non-last prefix case)
+#  (66): the last prefix is 0x66
+#  (F3): the last prefix is 0xF3
+#  (F2): the last prefix is 0xF2
+#  (!F3) : the last prefix is not 0xF3 (including non-last prefix case)
 
 Table: one byte opcode
 Referrer:
@@ -139,7 +139,8 @@ AVXcode:
 60: PUSHA/PUSHAD (i64)
 61: POPA/POPAD (i64)
 62: BOUND Gv,Ma (i64)
-63: ARPL Ew,Gw (i64) | MOVSXD Gv,Ev (o64)
+# According to Intel SDM A.2.2, MOVSXD should have "Gv,Ed", instead of "Gv,Ev"
+63: ARPL Ew,Gw (i64) | MOVSXD Gv,Ed (o64)
 64: SEG=FS (Prefix)
 65: SEG=GS (Prefix)
 66: Operand-Size (Prefix)
@@ -729,8 +730,9 @@ dc: VAESENC Vdq,Hdq,Wdq (66),(v1)
 dd: VAESENCLAST Vdq,Hdq,Wdq (66),(v1)
 de: VAESDEC Vdq,Hdq,Wdq (66),(v1)
 df: VAESDECLAST Vdq,Hdq,Wdq (66),(v1)
-f0: MOVBE Gy,My | MOVBE Gw,Mw (66) | CRC32 Gd,Eb (F2)
-f1: MOVBE My,Gy | MOVBE Mw,Gw (66) | CRC32 Gd,Ey (F2)
+# according Intel SDM vol.2 3.2, the 1st operand of CRC32 can take 32/64 gpr.
+f0: MOVBE Gy,My | MOVBE Gw,Mw (66) | CRC32 Gy,Eb (F2)
+f1: MOVBE My,Gy | MOVBE Mw,Gw (66) | CRC32 Gy,Ey (F2)
 f2: ANDN Gy,By,Ey (v)
 f3: Grp17 (1A)
 f5: BZHI Gy,Ey,By (v) | PEXT Gy,By,Ey (F3),(v) | PDEP Gy,By,Ey (F2),(v)
@@ -798,7 +800,8 @@ GrpTable: Grp1
 EndTable
 
 GrpTable: Grp1A
-0: POP
+# according to Intel SDM this POP has Ev operand
+0: POP Ev
 EndTable
 
 GrpTable: Grp2
@@ -817,10 +820,11 @@ GrpTable: Grp3_1
 1:
 2: NOT Eb
 3: NEG Eb
-4: MUL AL,Eb
-5: IMUL AL,Eb
-6: DIV AL,Eb
-7: IDIV AL,Eb
+# According to Intel SDM vol.2 3.2, *MUL/DIV has just 1 explict operand.
+4: MUL Eb
+5: IMUL Eb
+6: DIV Eb
+7: IDIV Eb
 EndTable
 
 GrpTable: Grp3_2
@@ -828,10 +832,11 @@ GrpTable: Grp3_2
 1:
 2: NOT Ev
 3: NEG Ev
-4: MUL rAX,Ev
-5: IMUL rAX,Ev
-6: DIV rAX,Ev
-7: IDIV rAX,Ev
+# According to Intel SDM vol.2 3.2, *MUL/DIV has just 1 explict operand.
+4: MUL Ev
+5: IMUL Ev
+6: DIV Ev
+7: IDIV Ev
 EndTable
 
 GrpTable: Grp4
@@ -861,7 +866,7 @@ EndTable
 
 GrpTable: Grp7
 0: SGDT Ms | VMCALL (001),(11B) | VMLAUNCH (010),(11B) | VMRESUME (011),(11B) | VMXOFF (100),(11B)
-1: SIDT Ms | MONITOR (000),(11B) | MWAIT (001)
+1: SIDT Ms | MONITOR (000),(11B) | MWAIT (001),(11B)
 2: LGDT Ms | XGETBV (000),(11B) | XSETBV (001),(11B) | VMFUNC (100),(11B)
 3: LIDT Ms
 4: SMSW Mw/Rv
@@ -878,7 +883,7 @@ GrpTable: Grp8
 EndTable
 
 GrpTable: Grp9
-1: CMPXCHG8B/16B Mq/Mdq
+1: CMPXCHG8B Mq | CMPXCHG16B Mdq
 6: VMPTRLD Mq | VMCLEAR Mq (66) | VMXON Mq (F3) | RDRAND Rv (11B)
 7: VMPTRST Mq | VMPTRST Mq (F3)
 EndTable
@@ -911,21 +916,25 @@ GrpTable: Grp14
 EndTable
 
 GrpTable: Grp15
-0: fxsave | RDFSBASE Ry (F3),(11B)
-1: fxstor | RDGSBASE Ry (F3),(11B)
+# according to Intel SDM 3.2, fxsave and fxrstor has M(512bytes) operand
+0: fxsave M | RDFSBASE Ry (F3),(11B)
+1: fxrstor M | RDGSBASE Ry (F3),(11B)
 2: vldmxcsr Md (v1) | WRFSBASE Ry (F3),(11B)
 3: vstmxcsr Md (v1) | WRGSBASE Ry (F3),(11B)
-4: XSAVE
-5: XRSTOR | lfence (11B)
-6: XSAVEOPT | mfence (11B)
-7: clflush | sfence (11B)
+# ditto.
+4: XSAVE M
+5: XRSTOR M | lfence (11B)
+6: XSAVEOPT M | mfence (11B)
+# according to Intel SDM vol2 3.2, clflush has m8 operand
+7: clflush Mb | sfence (11B)
 EndTable
 
 GrpTable: Grp16
-0: prefetch NTA
-1: prefetch T0
-2: prefetch T1
-3: prefetch T2
+# These are prefetchXX and have Mb operand (according to Intel SDM 4.2)
+0: prefetchNTA Mb
+1: prefetchT0 Mb
+2: prefetchT1 Mb
+3: prefetchT2 Mb
 EndTable
 
 GrpTable: Grp17
@@ -936,8 +945,8 @@ EndTable
 
 # AMD's Prefetch Group
 GrpTable: GrpP
-0: PREFETCH
-1: PREFETCHW
+0: PREFETCH Mb
+1: PREFETCHW Mb
 EndTable
 
 GrpTable: GrpPDLK
