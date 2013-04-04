@@ -83,12 +83,13 @@
 /* Flags */
 #define INAT_FLAG_OFFS	(INAT_IMM_OFFS + INAT_IMM_BITS)
 #define INAT_MODRM	(1 << (INAT_FLAG_OFFS))
-#define INAT_FORCE64	(1 << (INAT_FLAG_OFFS + 1))
-#define INAT_SCNDIMM	(1 << (INAT_FLAG_OFFS + 2))
-#define INAT_MOFFSET	(1 << (INAT_FLAG_OFFS + 3))
-#define INAT_VARIANT	(1 << (INAT_FLAG_OFFS + 4))
-#define INAT_VEXOK	(1 << (INAT_FLAG_OFFS + 5))
-#define INAT_VEXONLY	(1 << (INAT_FLAG_OFFS + 6))
+#define INAT_DEFAULT64	(1 << (INAT_FLAG_OFFS + 1))
+#define INAT_FORCE64	(1 << (INAT_FLAG_OFFS + 2))
+#define INAT_SCNDIMM	(1 << (INAT_FLAG_OFFS + 3))
+#define INAT_MOFFSET	(1 << (INAT_FLAG_OFFS + 4))
+#define INAT_VARIANT	(1 << (INAT_FLAG_OFFS + 5))
+#define INAT_VEXOK	(1 << (INAT_FLAG_OFFS + 6))
+#define INAT_VEXONLY	(1 << (INAT_FLAG_OFFS + 7))
 /* Attribute making macros for attribute tables */
 #define INAT_MAKE_PREFIX(pfx)	(pfx << INAT_PFX_OFFS)
 #define INAT_MAKE_ESCAPE(esc)	(esc << INAT_ESC_OFFS)
@@ -192,6 +193,11 @@ static inline int inat_has_modrm(insn_attr_t attr)
 static inline int inat_is_force64(insn_attr_t attr)
 {
 	return attr & INAT_FORCE64;
+}
+
+static inline int inat_is_default64(insn_attr_t attr)
+{
+	return attr & INAT_DEFAULT64;
 }
 
 static inline int inat_has_second_immediate(insn_attr_t attr)
