@@ -7,6 +7,7 @@
 
 #include <sys/types.h>
 #include <dirent.h>
+#include <linux/uidgid.h>
 #include <linux/list.h>
 #include <linux/rbtree.h>
 
