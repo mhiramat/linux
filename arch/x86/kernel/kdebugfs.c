@@ -206,12 +206,14 @@ static char disasm_funcname[KSYM_NAME_LEN];
 static unsigned long disasm_addr;
 static unsigned long disasm_size;
 static void *disasm_pos;
+static unsigned int disasm_style;
 
 static ssize_t disasm_write(struct file *file, const char __user *buffer,
 			    size_t count, loff_t *ppos)
 {
 	ssize_t ret = count;
 	char *c;
+	int style = DISASM_SYNTAX_ATT;
 
 	if (count >= KSYM_NAME_LEN)
 		return -E2BIG;
@@ -227,9 +229,18 @@ static ssize_t disasm_write(struct file *file, const char __user *buffer,
 	if (c)
 		*c = '\0';
 
+	/* Disassemble Flags */
+	c = strchr(disasm_funcname, ':');
+	if (c) {
+		*c = '\0';
+		if (strncmp(c + 1, "intel", 5) == 0)
+			style = DISASM_SYNTAX_INTEL;
+	}
 	disasm_addr = (unsigned long)kallsyms_lookup_name(disasm_funcname);
 	if (!disasm_addr)
 		ret = -EINVAL;
+	else
+		disasm_style = style;
 end:
 	mutex_unlock(&disasm_lock);
 
@@ -298,7 +309,7 @@ static int disasm_seq_show(struct seq_file *m, void *v)
 		seq_printf(m, "%*s", 3 * (MAX_INSN_SIZE / 2 - i), " ");
 
 	/* print assembly code */
-	ret = disassemble(buf, DISASM_BUF_LEN, &insn, DISASM_SYNTAX_ATT);
+	ret = disassemble(buf, DISASM_BUF_LEN, &insn, disasm_style);
 	if (ret < 0)
 		seq_printf(m, "(bad, reason:%d)\n", ret);
 	else
