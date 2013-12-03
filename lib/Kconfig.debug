@@ -1591,3 +1591,18 @@ source "samples/Kconfig"
 
 source "lib/Kconfig.kgdb"
 
+# Used by archs to tell that they support 64-bit BPF JIT
+config HAVE_BPF64_JIT
+	bool
+
+config BPF64
+	bool "Enable 64-bit BPF instruction set support"
+	help
+	  Enable this option to support 64-bit BPF programs
+
+config BPF64_JIT
+	bool "Enable 64-bit BPF JIT compiler"
+	depends on BPF64 && HAVE_BPF64_JIT
+	help
+	  Enable Just-In-Time compiler for 64-bit BPF programs
+
