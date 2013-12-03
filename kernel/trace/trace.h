@@ -616,6 +616,8 @@ void ftrace_trace_userstack(struct ring_buffer *buffer, unsigned long flags,
 
 void __trace_stack(struct trace_array *tr, unsigned long flags, int skip,
 		   int pc);
+void __trace_stack_regs(unsigned long flags, int skip, int pc,
+			struct pt_regs *regs);
 #else
 static inline void ftrace_trace_stack(struct ring_buffer *buffer,
 				      unsigned long flags, int skip, int pc)
@@ -635,6 +637,10 @@ static inline void ftrace_trace_userstack(struct ring_buffer *buffer,
 
 static inline void __trace_stack(struct trace_array *tr, unsigned long flags,
 				 int skip, int pc)
+{
+}
+static inline void __trace_stack_regs(unsigned long flags, int skip, int pc,
+				      struct pt_regs *regs)
 {
 }
 #endif /* CONFIG_STACKTRACE */
@@ -936,12 +942,15 @@ struct ftrace_event_field {
 	int			is_signed;
 };
 
+struct bpf_program;
+
 struct event_filter {
 	int			n_preds;	/* Number assigned */
 	int			a_preds;	/* allocated */
 	struct filter_pred	*preds;
 	struct filter_pred	*root;
 	char			*filter_string;
+	struct bpf_program	*prog;
 };
 
 struct event_subsystem {
@@ -1014,7 +1023,7 @@ filter_parse_regex(char *buff, int len, char **search, int *not);
 extern void print_event_filter(struct ftrace_event_file *file,
 			       struct trace_seq *s);
 extern int apply_event_filter(struct ftrace_event_file *file,
-			      char *filter_string);
+			      char *filter_string, int filter_len);
 extern int apply_subsystem_event_filter(struct ftrace_subsystem_dir *dir,
 					char *filter_string);
 extern void print_subsystem_event_filter(struct event_subsystem *system,

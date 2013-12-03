@@ -17,6 +17,7 @@
  */
 
 #include <linux/ftrace_event.h>
+#include <linux/kexec.h>
 
 /*
  * DECLARE_EVENT_CLASS can be used to add a generic function
@@ -526,6 +527,11 @@ static inline notrace int ftrace_get_offsets_##call(			\
 #undef DECLARE_EVENT_CLASS
 #define DECLARE_EVENT_CLASS(call, proto, args, tstruct, assign, print)	\
 									\
+static noinline __noclone notrace void					\
+ftrace_raw_event_save_regs_##call(struct pt_regs *__regs, proto)	\
+{									\
+	crash_setup_regs(__regs, NULL);					\
+}									\
 static notrace void							\
 ftrace_raw_event_##call(void *__data, proto)				\
 {									\
@@ -542,6 +548,14 @@ ftrace_raw_event_##call(void *__data, proto)				\
 	if (test_bit(FTRACE_EVENT_FL_SOFT_DISABLED_BIT,			\
 		     &ftrace_file->flags))				\
 		return;							\
+									\
+	if (unlikely(ftrace_file->flags & FTRACE_EVENT_FL_FILTERED) &&	\
+	    unlikely(ftrace_file->event_call->flags & TRACE_EVENT_FL_BPF)) { \
+		struct pt_regs __regs;					\
+		ftrace_raw_event_save_regs_##call(&__regs, args);	\
+		filter_call_bpf(ftrace_file->filter, &__regs);		\
+		return;							\
+	}								\
 									\
 	local_save_flags(irq_flags);					\
 	pc = preempt_count();						\

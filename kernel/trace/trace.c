@@ -1758,6 +1758,13 @@ void __trace_stack(struct trace_array *tr, unsigned long flags, int skip,
 	__ftrace_trace_stack(tr->trace_buffer.buffer, flags, skip, pc, NULL);
 }
 
+void __trace_stack_regs(unsigned long flags, int skip, int pc,
+			struct pt_regs *regs)
+{
+	__ftrace_trace_stack(global_trace.trace_buffer.buffer, flags, skip,
+			     pc, regs);
+}
+
 /**
  * trace_dump_stack - record a stack back trace in the trace buffer
  * @skip: Number of functions to skip (helper handlers)

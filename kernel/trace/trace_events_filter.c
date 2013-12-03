@@ -23,6 +23,8 @@
 #include <linux/mutex.h>
 #include <linux/perf_event.h>
 #include <linux/slab.h>
+#include <linux/bpf_jit.h>
+#include <trace/bpf_trace.h>
 
 #include "trace.h"
 #include "trace_output.h"
@@ -535,6 +537,20 @@ static int filter_match_preds_cb(enum move_type move, struct filter_pred *pred,
 	return WALK_PRED_DEFAULT;
 }
 
+void filter_call_bpf(struct event_filter *filter, struct pt_regs *regs)
+{
+	BUG_ON(!filter || !filter->prog);
+
+	if (!filter->prog->jit_image) {
+		pr_warn_once("BPF jit image is not available. Fallback to emulation\n");
+		bpf_run(filter->prog, (struct bpf_context *)regs);
+		return;
+	}
+
+	filter->prog->jit_image((struct bpf_context *)regs);
+}
+EXPORT_SYMBOL_GPL(filter_call_bpf);
+
 /* return 1 if event matches, 0 otherwise (discard) */
 int filter_match_preds(struct event_filter *filter, void *rec)
 {
@@ -794,6 +810,7 @@ static void __free_filter(struct event_filter *filter)
 	if (!filter)
 		return;
 
+	bpf_free(filter->prog);
 	__free_preds(filter);
 	kfree(filter->filter_string);
 	kfree(filter);
@@ -1893,6 +1910,37 @@ static int create_filter_start(char *filter_str, bool set_str,
 	return err;
 }
 
+static int create_filter_bpf(char *filter_str, int filter_len,
+			     struct event_filter **filterp)
+{
+	struct event_filter *filter;
+	int err = 0;
+
+	*filterp = NULL;
+
+	filter = __alloc_filter();
+	if (filter)
+		err = replace_filter_string(filter, "bpf");
+
+	if (!filter || err) {
+		__free_filter(filter);
+		return -ENOMEM;
+	}
+
+	err = bpf_load_image(filter_str, filter_len, &bpf_trace_cb,
+			     &filter->prog);
+
+	if (err) {
+		pr_err("failed to load bpf %d\n", err);
+		__free_filter(filter);
+		return -EACCES;
+	}
+
+	*filterp = filter;
+
+	return err;
+}
+
 static void create_filter_finish(struct filter_parse_state *ps)
 {
 	if (ps) {
@@ -1973,7 +2021,8 @@ static int create_system_filter(struct event_subsystem *system,
 }
 
 /* caller must hold event_mutex */
-int apply_event_filter(struct ftrace_event_file *file, char *filter_string)
+int apply_event_filter(struct ftrace_event_file *file, char *filter_string,
+		       int filter_len)
 {
 	struct ftrace_event_call *call = file->event_call;
 	struct event_filter *filter;
@@ -1995,7 +2044,15 @@ int apply_event_filter(struct ftrace_event_file *file, char *filter_string)
 		return 0;
 	}
 
-	err = create_filter(call, filter_string, true, &filter);
+	if (!strcmp(filter_string, "bpf")) {
+		err = create_filter_bpf(filter_string, filter_len, &filter);
+		if (!err)
+			call->flags |= TRACE_EVENT_FL_BPF;
+	} else {
+		err = create_filter(call, filter_string, true, &filter);
+		if (!err)
+			call->flags &= ~TRACE_EVENT_FL_BPF;
+	}
 
 	/*
 	 * Always swap the call filter with the new filter

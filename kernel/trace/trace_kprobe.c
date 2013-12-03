@@ -819,6 +819,12 @@ __kprobe_trace_func(struct trace_probe *tp, struct pt_regs *regs,
 	if (test_bit(FTRACE_EVENT_FL_SOFT_DISABLED_BIT, &ftrace_file->flags))
 		return;
 
+	if (unlikely(ftrace_file->flags & FTRACE_EVENT_FL_FILTERED) &&
+	    unlikely(ftrace_file->event_call->flags & TRACE_EVENT_FL_BPF)) {
+		filter_call_bpf(ftrace_file->filter, regs);
+		return;
+	}
+
 	local_save_flags(irq_flags);
 	pc = preempt_count();
 

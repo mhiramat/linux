@@ -203,6 +203,7 @@ enum {
 	TRACE_EVENT_FL_IGNORE_ENABLE_BIT,
 	TRACE_EVENT_FL_WAS_ENABLED_BIT,
 	TRACE_EVENT_FL_USE_CALL_FILTER_BIT,
+	TRACE_EVENT_FL_BPF_BIT,
 };
 
 /*
@@ -223,6 +224,7 @@ enum {
 	TRACE_EVENT_FL_IGNORE_ENABLE	= (1 << TRACE_EVENT_FL_IGNORE_ENABLE_BIT),
 	TRACE_EVENT_FL_WAS_ENABLED	= (1 << TRACE_EVENT_FL_WAS_ENABLED_BIT),
 	TRACE_EVENT_FL_USE_CALL_FILTER	= (1 << TRACE_EVENT_FL_USE_CALL_FILTER_BIT),
+	TRACE_EVENT_FL_BPF		= (1 << TRACE_EVENT_FL_BPF_BIT),
 };
 
 struct ftrace_event_call {
@@ -347,6 +349,7 @@ extern int filter_check_discard(struct ftrace_event_file *file, void *rec,
 extern int call_filter_check_discard(struct ftrace_event_call *call, void *rec,
 				     struct ring_buffer *buffer,
 				     struct ring_buffer_event *event);
+extern void filter_call_bpf(struct event_filter *filter, struct pt_regs *regs);
 
 enum {
 	FILTER_OTHER = 0,

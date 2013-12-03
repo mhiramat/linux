@@ -80,6 +80,7 @@ config FTRACE_NMI_ENTER
 
 config EVENT_TRACING
 	select CONTEXT_SWITCH_TRACER
+	select BPF64
 	bool
 
 config CONTEXT_SWITCH_TRACER

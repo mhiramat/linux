@@ -1041,8 +1041,15 @@ event_filter_write(struct file *filp, const char __user *ubuf, size_t cnt,
 	mutex_lock(&event_mutex);
 	file = event_file_data(filp);
 	if (file)
-		err = apply_event_filter(file, buf);
+		err = apply_event_filter(file, buf, cnt);
 	mutex_unlock(&event_mutex);
+
+	if (file->event_call->flags & TRACE_EVENT_FL_BPF)
+		/*
+		 * allocate per-cpu printk buffers, since BPF program
+		 * might be calling bpf_trace_printk
+		 */
+		trace_printk_init_buffers();
 
 	free_page((unsigned long) buf);
 	if (err < 0)
