@@ -13,6 +13,7 @@
 #include <linux/filter.h>
 #include <linux/if_vlan.h>
 #include <linux/random.h>
+#include "bpf_jit_comp.h"
 
 /*
  * Conventions :
@@ -112,16 +113,6 @@ do {								\
 #define SEEN_XREG    2 /* ebx is used */
 #define SEEN_MEM     4 /* use mem[] for temporary storage */
 
-static inline void bpf_flush_icache(void *start, void *end)
-{
-	mm_segment_t old_fs = get_fs();
-
-	set_fs(KERNEL_DS);
-	smp_wmb();
-	flush_icache_range((unsigned long)start, (unsigned long)end);
-	set_fs(old_fs);
-}
-
 #define CHOOSE_LOAD_FUNC(K, func) \
 	((int)K < 0 ? ((int)K >= SKF_LL_OFF ? func##_negative_offset : func) : func##_positive_offset)
 
@@ -145,16 +136,8 @@ static int pkt_type_offset(void)
 	return -1;
 }
 
-struct bpf_binary_header {
-	unsigned int	pages;
-	/* Note : for security reasons, bpf code will follow a randomly
-	 * sized amount of int3 instructions
-	 */
-	u8		image[];
-};
-
-static struct bpf_binary_header *bpf_alloc_binary(unsigned int proglen,
-						  u8 **image_ptr)
+struct bpf_binary_header *bpf_alloc_binary(unsigned int proglen,
+					   u8 **image_ptr)
 {
 	unsigned int sz, hole;
 	struct bpf_binary_header *header;
