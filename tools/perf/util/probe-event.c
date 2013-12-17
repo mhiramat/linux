@@ -72,6 +72,8 @@ static int e_snprintf(char *str, size_t size, const char *format, ...)
 static char *synthesize_perf_probe_point(struct perf_probe_point *pp);
 static int convert_name_to_addr(struct perf_probe_event *pev,
 				const char *exec);
+static int convert_name_to_path_offset(const char *exec, const char *function,
+				       char **path, unsigned long *offs);
 static struct machine machine;
 
 /* Initialize symbol maps and path of vmlinux/modules */
@@ -261,6 +263,41 @@ static int kprobe_convert_to_perf_probe(struct probe_trace_point *tp,
 	return 0;
 }
 
+static int add_exec_to_probe_trace_events(struct probe_trace_event *tevs,
+					  int ntevs, const char *exec)
+{
+	int i, ret = 0;
+	char *path;
+	unsigned long offset;
+	char buf[32];
+
+	if (!exec)
+		return 0;
+
+	for (i = 0; i < ntevs; i++) {
+		/* Get proper path and offset */
+		ret = convert_name_to_path_offset(exec, tevs[i].point.symbol,
+						 &path, &offset);
+		if (ret < 0)
+			break;
+		tevs[i].point.module = path;
+		offset += tevs[i].point.offset;
+		tevs[i].point.offset = 0;
+		free(tevs[i].point.symbol);
+		ret = e_snprintf(buf, 32, "0x%lx", offset);
+		if (ret < 0)
+			break;
+		tevs[i].point.symbol = strdup(buf);
+		if (!tevs[i].point.symbol) {
+			ret = -ENOMEM;
+			break;
+		}
+		tevs[i].uprobes = true;
+	}
+
+	return ret;
+}
+
 static int add_module_to_probe_trace_events(struct probe_trace_event *tevs,
 					    int ntevs, const char *module)
 {
@@ -296,6 +333,7 @@ static int add_module_to_probe_trace_events(struct probe_trace_event *tevs,
 	return ret;
 }
 
+
 /* Try to find perf_probe_event with debuginfo */
 static int try_to_find_probe_trace_events(struct perf_probe_event *pev,
 					  struct probe_trace_event **tevs,
@@ -304,15 +342,6 @@ static int try_to_find_probe_trace_events(struct perf_probe_event *pev,
 	bool need_dwarf = perf_probe_event_need_dwarf(pev);
 	struct debuginfo *dinfo;
 	int ntevs, ret = 0;
-
-	if (pev->uprobes) {
-		if (need_dwarf) {
-			pr_warning("Debuginfo-analysis is not yet supported"
-					" with -x/--exec option.\n");
-			return -ENOSYS;
-		}
-		return convert_name_to_addr(pev, target);
-	}
 
 	dinfo = open_debuginfo(target);
 
@@ -332,9 +361,14 @@ static int try_to_find_probe_trace_events(struct perf_probe_event *pev,
 
 	if (ntevs > 0) {	/* Succeeded to find trace events */
 		pr_debug("find %d probe_trace_events.\n", ntevs);
-		if (target)
-			ret = add_module_to_probe_trace_events(*tevs, ntevs,
-							       target);
+		if (target) {
+			if (pev->uprobes)
+				ret = add_exec_to_probe_trace_events(*tevs,
+						 ntevs, target);
+			else
+				ret = add_module_to_probe_trace_events(*tevs,
+						 ntevs, target);
+		}
 		return ret < 0 ? ret : ntevs;
 	}
 
@@ -653,9 +687,6 @@ static int try_to_find_probe_trace_events(struct perf_probe_event *pev,
 		pr_warning("Debuginfo-analysis is not supported.\n");
 		return -ENOSYS;
 	}
-
-	if (pev->uprobes)
-		return convert_name_to_addr(pev, target);
 
 	return 0;
 }
@@ -1921,6 +1952,12 @@ static int convert_to_probe_trace_events(struct perf_probe_event *pev,
 	if (ret != 0)
 		return ret;	/* Found in debuginfo or got an error */
 
+	if (pev->uprobes) {
+		ret = convert_name_to_addr(pev, target);
+		if (ret < 0)
+			return ret;
+	}
+
 	/* Allocate trace event buffer */
 	tev = *tevs = zalloc(sizeof(struct probe_trace_event));
 	if (tev == NULL)
@@ -2272,37 +2309,22 @@ int show_available_funcs(const char *target, struct strfilter *_filter,
 	return available_user_funcs(target);
 }
 
-/*
- * uprobe_events only accepts address:
- * Convert function and any offset to address
- */
-static int convert_name_to_addr(struct perf_probe_event *pev, const char *exec)
+static int convert_name_to_path_offset(const char *exec, const char *function,
+				       char **path, unsigned long *offs)
 {
-	struct perf_probe_point *pp = &pev->point;
 	struct symbol *sym;
 	struct map *map = NULL;
-	char *function = NULL, *name = NULL;
 	int ret = -EINVAL;
-	unsigned long long vaddr = 0;
 
-	if (!pp->function) {
-		pr_warning("No function specified for uprobes");
-		goto out;
-	}
+	if (!path || !offs)
+		return -EINVAL;
 
-	function = strdup(pp->function);
-	if (!function) {
-		pr_warning("Failed to allocate memory by strdup.\n");
-		ret = -ENOMEM;
-		goto out;
-	}
-
-	name = realpath(exec, NULL);
-	if (!name) {
+	*path = realpath(exec, NULL);
+	if (!*path) {
 		pr_warning("Cannot find realpath for %s.\n", exec);
 		goto out;
 	}
-	map = dso__new_map(name);
+	map = dso__new_map(*path);
 	if (!map) {
 		pr_warning("Cannot find appropriate DSO for %s.\n", exec);
 		goto out;
@@ -2319,15 +2341,45 @@ static int convert_name_to_addr(struct perf_probe_event *pev, const char *exec)
 		goto out;
 	}
 
-	if (map->start > sym->start)
-		vaddr = map->start;
-	vaddr += sym->start + pp->offset + map->pgoff;
+	*offs = (map->start > sym->start) ?  map->start : 0;
+	*offs += sym->start + map->pgoff;
+	ret = 0;
+out:
+	if (map) {
+		dso__delete(map->dso);
+		map__delete(map);
+	}
+	return ret;
+}
+
+/*
+ * uprobe_events only accepts address:
+ * Convert function and any offset to address
+ */
+static int convert_name_to_addr(struct perf_probe_event *pev, const char *exec)
+{
+	struct perf_probe_point *pp = &pev->point;
+	char *name = NULL;
+	int ret = -EINVAL;
+	unsigned long vaddr = 0;
+
+	if (!pp->function) {
+		pr_warning("No function specified for uprobes");
+		goto out;
+	}
+
+	ret = convert_name_to_path_offset(exec, pp->function, &name, &vaddr);
+	if (ret < 0)
+		goto out;
+
+	vaddr += pp->offset;
 	pp->offset = 0;
 
 	if (!pev->event) {
-		pev->event = function;
-		function = NULL;
+		pev->event = pp->function;
+		pp->function = NULL;
 	}
+
 	if (!pev->group) {
 		char *ptr1, *ptr2, *exec_copy;
 
@@ -2357,16 +2409,10 @@ static int convert_name_to_addr(struct perf_probe_event *pev, const char *exec)
 		pr_warning("Failed to allocate memory by zalloc.\n");
 		goto out;
 	}
-	e_snprintf(pp->function, MAX_PROBE_ARGS, "0x%llx", vaddr);
+	e_snprintf(pp->function, MAX_PROBE_ARGS, "0x%lx", vaddr);
 	ret = 0;
 
 out:
-	if (map) {
-		dso__delete(map->dso);
-		map__delete(map);
-	}
-	if (function)
-		free(function);
 	if (name)
 		free(name);
 	return ret;
