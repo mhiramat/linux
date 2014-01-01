@@ -72,6 +72,7 @@ static int e_snprintf(char *str, size_t size, const char *format, ...)
 static char *synthesize_perf_probe_point(struct perf_probe_point *pp);
 static int convert_name_to_addr(struct perf_probe_event *pev,
 				const char *exec);
+static void clear_probe_trace_event(struct probe_trace_event *tev);
 static struct machine machine;
 
 /* Initialize symbol maps and path of vmlinux/modules */
@@ -263,6 +264,14 @@ out:
 	return ret;
 }
 
+static void clear_probe_trace_events(struct probe_trace_event *tevs, int ntevs)
+{
+	int i;
+
+	for (i = 0; i < ntevs; i++)
+		clear_probe_trace_event(tevs + i);
+}
+
 static int convert_to_perf_probe_point(struct probe_trace_point *tp,
 					struct perf_probe_point *pp)
 {
@@ -439,6 +448,10 @@ static int try_to_find_probe_trace_events(struct perf_probe_event *pev,
 			else
 				ret = add_module_to_probe_trace_events(*tevs,
 						 ntevs, target);
+		}
+		if (ret < 0) {
+			clear_probe_trace_events(*tevs, ntevs);
+			zfree(tevs);
 		}
 		return ret < 0 ? ret : ntevs;
 	}
