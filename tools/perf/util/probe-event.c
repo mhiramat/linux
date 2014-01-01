@@ -173,24 +173,6 @@ const char *kernel_get_module_path(const char *module)
 	return (dso) ? dso->long_name : NULL;
 }
 
-/* Copied from unwind.c */
-static Elf_Scn *elf_section_by_name(Elf *elf, GElf_Ehdr *ep,
-				    GElf_Shdr *shp, const char *name)
-{
-	Elf_Scn *sec = NULL;
-
-	while ((sec = elf_nextscn(elf, sec)) != NULL) {
-		char *str;
-
-		gelf_getshdr(sec, shp);
-		str = elf_strptr(elf, ep->e_shstrndx, shp->sh_name);
-		if (!strcmp(name, str))
-			break;
-	}
-
-	return sec;
-}
-
 static int get_text_start_address(const char *exec, unsigned long *address)
 {
 	Elf *elf;
@@ -209,7 +191,7 @@ static int get_text_start_address(const char *exec, unsigned long *address)
 	if (gelf_getehdr(elf, &ehdr) == NULL)
 		goto out;
 
-	if (!elf_section_by_name(elf, &ehdr, &shdr, ".text"))
+	if (!elf_section_by_name(elf, &ehdr, &shdr, ".text", NULL))
 		goto out;
 
 	*address = shdr.sh_addr - shdr.sh_offset;
