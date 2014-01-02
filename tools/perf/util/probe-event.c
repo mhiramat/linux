@@ -773,6 +773,22 @@ int show_available_vars(struct perf_probe_event *pevs __maybe_unused,
 }
 #endif
 
+void line_range__clear(struct line_range *lr)
+{
+	free(lr->function);
+	free(lr->file);
+	free(lr->path);
+	free(lr->comp_dir);
+	line_list__free(&lr->line_list);
+	memset(lr, 0, sizeof(*lr));
+}
+
+void line_range__init(struct line_range *lr)
+{
+	memset(lr, 0, sizeof(*lr));
+	line_list__init(&lr->line_list);
+}
+
 static int parse_line_num(char **ptr, int *val, const char *what)
 {
 	const char *start = *ptr;

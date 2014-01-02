@@ -223,7 +223,6 @@ static int opt_show_lines(const struct option *opt __maybe_unused,
 
 	params.show_lines = true;
 	ret = parse_line_range_desc(str, &params.line_range);
-	INIT_LIST_HEAD(&params.line_range.line_list);
 
 	return ret;
 }
@@ -269,7 +268,28 @@ static int opt_set_filter(const struct option *opt __maybe_unused,
 	return 0;
 }
 
-int cmd_probe(int argc, const char **argv, const char *prefix __maybe_unused)
+static void init_params(void)
+{
+	line_range__init(&params.line_range);
+}
+
+static void cleanup_params(void)
+{
+	int i;
+
+	for (i = 0; i < params.nevents; i++)
+		clear_perf_probe_event(params.events + i);
+	if (params.dellist)
+		strlist__delete(params.dellist);
+	line_range__clear(&params.line_range);
+	free(params.target);
+	if (params.filter)
+		strfilter__delete(params.filter);
+	memset(&params, 0, sizeof(params));
+}
+
+static int 
+__cmd_probe(int argc, const char **argv, const char *prefix __maybe_unused)
 {
 	const char * const probe_usage[] = {
 		"perf probe [<options>] 'PROBEDEF' ['PROBEDEF' ...]",
@@ -488,4 +508,15 @@ int cmd_probe(int argc, const char **argv, const char *prefix __maybe_unused)
 		}
 	}
 	return 0;
+}
+
+int cmd_probe(int argc, const char **argv, const char *prefix)
+{
+	int ret;
+
+	init_params();
+	ret = __cmd_probe(argc, argv, prefix);
+	cleanup_params();
+
+	return ret;
 }

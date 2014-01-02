@@ -85,13 +85,13 @@ static int line_list__has_line(struct list_head *head, int line)
 }
 
 /* Init line number list */
-static void line_list__init(struct list_head *head)
+void line_list__init(struct list_head *head)
 {
 	INIT_LIST_HEAD(head);
 }
 
 /* Free line number list */
-static void line_list__free(struct list_head *head)
+void line_list__free(struct list_head *head)
 {
 	struct line_node *ln;
 	while (!list_empty(head)) {
