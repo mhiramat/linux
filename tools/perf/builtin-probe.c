@@ -59,7 +59,7 @@ static struct {
 	struct perf_probe_event events[MAX_PROBES];
 	struct strlist *dellist;
 	struct line_range line_range;
-	const char *target;
+	char *target;
 	int max_probe_points;
 	struct strfilter *filter;
 } params;
@@ -98,7 +98,10 @@ static int set_target(const char *ptr)
 	 * short module name.
 	 */
 	if (!params.target && ptr && *ptr == '/') {
-		params.target = ptr;
+		params.target = strdup(ptr);
+		if (!params.target)
+			return -ENOMEM;
+
 		found = 1;
 		buf = ptr + (strlen(ptr) - 3);
 
@@ -116,6 +119,9 @@ static int parse_probe_event_argv(int argc, const char **argv)
 	char *buf;
 
 	found_target = set_target(argv[0]);
+	if (found_target < 0)
+		return found_target;
+
 	if (found_target && argc == 1)
 		return 0;
 
