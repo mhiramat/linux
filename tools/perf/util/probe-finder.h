@@ -15,6 +15,9 @@ static inline int is_c_varname(const char *name)
 	return isalpha(name[0]) || name[0] == '_';
 }
 
+extern void line_list__init(struct list_head *head);
+extern void line_list__free(struct list_head *head);
+
 #ifdef HAVE_DWARF_SUPPORT
 
 #include "dwarf-aux.h"
