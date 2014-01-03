@@ -102,6 +102,16 @@ struct dso {
 	char		 name[0];
 };
 
+/* dso__for_each_symbol - iterate over the symbols of given type
+ *
+ * @pos: the 'struct symbol *' to use as a loop cursor
+ * @n: the 'struct rb_node *' to use as a temporary storage
+ * @dso: the 'struct dso *' in which symbols itereated
+ * @type: the 'enum map_type' type of symbols
+ */
+#define dso__for_each_symbol(pos, n, dso, type)	\
+	symbols__for_each_entry(pos, n, &(dso)->symbols[(type)])
+
 static inline void dso__set_loaded(struct dso *dso, enum map_type type)
 {
 	dso->loaded |= (1 << type);

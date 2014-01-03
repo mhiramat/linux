@@ -89,6 +89,15 @@ u64 map__objdump_2mem(struct map *map, u64 ip);
 
 struct symbol;
 
+/* map__for_each_symbol - iterate over the symbols in the given map
+ *
+ * @pos: the 'struct symbol *' to use as a loop cursor
+ * @n: the 'struct rb_node *' to use as a temporary storage
+ * @map: the 'struct map *' in which symbols itereated
+ */
+#define map__for_each_symbol(pos, n, map)	\
+	while (map->dso) dso__for_each_symbol(pos, n, map->dso, map->type)
+
 typedef int (*symbol_filter_t)(struct map *map, struct symbol *sym);
 
 void map__init(struct map *map, enum map_type type,
