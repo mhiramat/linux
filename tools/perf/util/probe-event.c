@@ -1511,20 +1511,27 @@ char *synthesize_probe_trace_command(struct probe_trace_event *tev)
 	if (buf == NULL)
 		return NULL;
 
-	if (tev->uprobes)
-		len = e_snprintf(buf, MAX_CMDLEN, "%c:%s/%s %s:%s",
-				 tp->retprobe ? 'r' : 'p',
-				 tev->group, tev->event,
+	len = e_snprintf(buf, MAX_CMDLEN, "%c:%s/%s ", tp->retprobe ? 'r' : 'p',
+			 tev->group, tev->event);
+	if (len <= 0)
+		goto error;
+
+	/* When there is a real address, use it */
+	if (tp->address)
+		ret = e_snprintf(buf + len, MAX_CMDLEN, "%s%s0x%lx",
+				 tp->module ?: "", tp->module ? ":" : "",
+				 tp->address);
+	else if (tev->uprobes)
+		ret = e_snprintf(buf + len, MAX_CMDLEN, "%s:%s",
 				 tp->module, tp->symbol);
 	else
-		len = e_snprintf(buf, MAX_CMDLEN, "%c:%s/%s %s%s%s+%lu",
-				 tp->retprobe ? 'r' : 'p',
-				 tev->group, tev->event,
+		ret = e_snprintf(buf, MAX_CMDLEN, "%s%s%s+%lu",
 				 tp->module ?: "", tp->module ? ":" : "",
 				 tp->symbol, tp->offset);
 
-	if (len <= 0)
+	if (ret <= 0)
 		goto error;
+	len += ret;
 
 	for (i = 0; i < tev->nargs; i++) {
 		ret = synthesize_probe_trace_arg(&tev->args[i], buf + len,
