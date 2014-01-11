@@ -140,7 +140,7 @@ static struct dso *kernel_get_module_dso(const char *module)
 	struct map *map;
 	const char *vmlinux_name;
 
-	if (module) {
+	if (module && strcmp(module, "kernel") != 0) {
 		list_for_each_entry(dso, &machine.kernel_dsos, node) {
 			if (strncmp(dso->short_name + 1, module,
 				    dso->short_name_len - 2) == 0)
@@ -257,12 +257,22 @@ static void clear_probe_trace_events(struct probe_trace_event *tevs, int ntevs)
 static int convert_to_perf_probe_point(struct probe_trace_point *tp,
 					struct perf_probe_point *pp)
 {
-	pp->function = strdup(tp->symbol);
+	char buf[128];
+	int ret;
 
+	if (tp->symbol) {
+		pp->function = strdup(tp->symbol);
+		pp->offset = tp->offset;
+	} else {
+		ret = e_snprintf(buf, 128, "0x%" PRIx64, (u64)tp->address);
+		if (ret < 0)
+			return ret;
+		pp->function = strdup(buf);
+		pp->offset = 0;
+	}
 	if (pp->function == NULL)
 		return -ENOMEM;
 
-	pp->offset = tp->offset;
 	pp->retprobe = tp->retprobe;
 
 	return 0;
@@ -298,28 +308,35 @@ static int kprobe_convert_to_perf_probe(struct probe_trace_point *tp,
 {
 	struct symbol *sym;
 	struct map *map;
-	u64 addr;
-	int ret = -ENOENT;
+	u64 addr = tp->address;
+	int ret;
 	struct debuginfo *dinfo;
 
-	sym = __find_kernel_function_by_name(tp->symbol, &map);
-	if (sym) {
-		addr = map->unmap_ip(map, sym->start + tp->offset);
-		pr_debug("try to find %s+%ld@%" PRIx64 "\n", tp->symbol,
-			 tp->offset, addr);
-
-		dinfo = debuginfo__new_online_kernel(addr);
-		if (dinfo) {
-			ret = debuginfo__find_probe_point(dinfo,
-						 (unsigned long)addr, pp);
-			debuginfo__delete(dinfo);
-		} else {
-			pr_debug("Failed to open debuginfo at 0x%" PRIx64 "\n",
-				 addr);
+	if (!addr) {
+		sym = __find_kernel_function_by_name(tp->symbol, &map);
+		if (!sym) {
 			ret = -ENOENT;
+			goto error;
 		}
+		addr = map->unmap_ip(map, sym->start + tp->offset);
 	}
+
+	pr_debug("try to find information at %" PRIx64 " in %s\n", addr,
+		 tp->module ? : "kernel");
+
+	dinfo = debuginfo__new_online_kernel(addr);
+	if (dinfo) {
+		ret = debuginfo__find_probe_point(dinfo,
+						 (unsigned long)addr, pp);
+		debuginfo__delete(dinfo);
+	} else {
+		pr_debug("Failed to open debuginfo at 0x%" PRIx64 "\n",
+			 addr);
+		ret = -ENOENT;
+	}
+
 	if (ret <= 0) {
+error:
 		pr_debug("Failed to find corresponding probes from "
 			 "debuginfo. Use kprobe event information.\n");
 		return convert_to_perf_probe_point(tp, pp);
@@ -734,10 +751,13 @@ static int kprobe_convert_to_perf_probe(struct probe_trace_point *tp,
 {
 	struct symbol *sym;
 
-	sym = __find_kernel_function_by_name(tp->symbol, NULL);
-	if (!sym) {
-		pr_err("Failed to find symbol %s in kernel.\n", tp->symbol);
-		return -ENOENT;
+	if (tp->symbol) {
+		sym = __find_kernel_function_by_name(tp->symbol, NULL);
+		if (!sym) {
+			pr_err("Failed to find symbol %s in kernel.\n",
+				tp->symbol);
+			return -ENOENT;
+		}
 	}
 
 	return convert_to_perf_probe_point(tp, pp);
@@ -1260,16 +1280,21 @@ static int parse_probe_trace_command(const char *cmd,
 	} else
 		p = argv[1];
 	fmt1_str = strtok_r(p, "+", &fmt);
-	tp->symbol = strdup(fmt1_str);
-	if (tp->symbol == NULL) {
-		ret = -ENOMEM;
-		goto out;
+	if (fmt1_str[0] == '0')	/* only the address started with 0x */
+		tp->address = strtoul(fmt1_str, NULL, 0);
+	else {
+		/* Only the symbol-based probe has offset */
+		tp->symbol = strdup(fmt1_str);
+		if (tp->symbol == NULL) {
+			ret = -ENOMEM;
+			goto out;
+		}
+		fmt2_str = strtok_r(NULL, "", &fmt);
+		if (fmt2_str == NULL)
+			tp->offset = 0;
+		else
+			tp->offset = strtoul(fmt2_str, NULL, 10);
 	}
-	fmt2_str = strtok_r(NULL, "", &fmt);
-	if (fmt2_str == NULL)
-		tp->offset = 0;
-	else
-		tp->offset = strtoul(fmt2_str, NULL, 10);
 
 	tev->nargs = argc - 2;
 	tev->args = zalloc(sizeof(struct probe_trace_arg) * tev->nargs);
