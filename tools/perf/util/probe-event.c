@@ -105,11 +105,18 @@ out:
 	return ret;
 }
 
+/* Caller must call init_vmlinux before invoking this */
 static struct symbol *__find_kernel_function_by_name(const char *name,
 						     struct map **mapp)
 {
 	return machine__find_kernel_function_by_name(&machine, name, mapp,
 						     NULL);
+}
+
+/* Caller must call init_vmlinux before invoking this */
+static struct symbol *__find_kernel_function(u64 addr, struct map **mapp)
+{
+	return machine__find_kernel_function(&machine, addr, mapp, NULL);
 }
 
 static struct map *kernel_get_module_map(const char *module)
@@ -259,17 +266,29 @@ static int convert_to_perf_probe_point(struct probe_trace_point *tp,
 {
 	char buf[128];
 	int ret;
+	struct symbol *sym;
+	struct map *map;
+	u64 addr;
 
-	if (tp->symbol) {
+	if (!tp->symbol) {
+		sym = __find_kernel_function(tp->address, &map);
+		if (sym) {
+			pp->function = strdup(sym->name);
+			addr = map->unmap_ip(map, sym->start);
+			pp->offset = tp->address - addr;
+		} else {
+			ret = e_snprintf(buf, 128, "0x%" PRIx64,
+					 (u64)tp->address);
+			if (ret < 0)
+				return ret;
+			pp->function = strdup(buf);
+			pp->offset = 0;
+		}
+	} else {
 		pp->function = strdup(tp->symbol);
 		pp->offset = tp->offset;
-	} else {
-		ret = e_snprintf(buf, 128, "0x%" PRIx64, (u64)tp->address);
-		if (ret < 0)
-			return ret;
-		pp->function = strdup(buf);
-		pp->offset = 0;
 	}
+
 	if (pp->function == NULL)
 		return -ENOMEM;
 
