@@ -261,42 +261,6 @@ static void clear_probe_trace_events(struct probe_trace_event *tevs, int ntevs)
 		clear_probe_trace_event(tevs + i);
 }
 
-static int convert_to_perf_probe_point(struct probe_trace_point *tp,
-					struct perf_probe_point *pp)
-{
-	char buf[128];
-	int ret;
-	struct symbol *sym;
-	struct map *map;
-	u64 addr;
-
-	if (!tp->symbol) {
-		sym = __find_kernel_function(tp->address, &map);
-		if (sym) {
-			pp->function = strdup(sym->name);
-			addr = map->unmap_ip(map, sym->start);
-			pp->offset = tp->address - addr;
-		} else {
-			ret = e_snprintf(buf, 128, "0x%" PRIx64,
-					 (u64)tp->address);
-			if (ret < 0)
-				return ret;
-			pp->function = strdup(buf);
-			pp->offset = 0;
-		}
-	} else {
-		pp->function = strdup(tp->symbol);
-		pp->offset = tp->offset;
-	}
-
-	if (pp->function == NULL)
-		return -ENOMEM;
-
-	pp->retprobe = tp->retprobe;
-
-	return 0;
-}
-
 #ifdef HAVE_DWARF_SUPPORT
 /* Open new debuginfo of given module */
 static struct debuginfo *open_debuginfo(const char *module)
@@ -322,8 +286,9 @@ static struct debuginfo *open_debuginfo(const char *module)
  * Convert trace point to probe point with debuginfo
  * Currently only handles kprobes.
  */
-static int kprobe_convert_to_perf_probe(struct probe_trace_point *tp,
-					struct perf_probe_point *pp)
+static int find_perf_probe_point_from_dwarf(struct probe_trace_point *tp,
+					    struct perf_probe_point *pp,
+					    bool is_kprobe)
 {
 	struct symbol *sym;
 	struct map *map;
@@ -343,7 +308,11 @@ static int kprobe_convert_to_perf_probe(struct probe_trace_point *tp,
 	pr_debug("try to find information at %" PRIx64 " in %s\n", addr,
 		 tp->module ? : "kernel");
 
-	dinfo = debuginfo__new_online_kernel(addr);
+	if (is_kprobe)
+		dinfo = debuginfo__new_online_kernel(addr);
+	else
+		dinfo = open_debuginfo(tp->module);
+
 	if (dinfo) {
 		ret = debuginfo__find_probe_point(dinfo,
 						 (unsigned long)addr, pp);
@@ -356,9 +325,8 @@ static int kprobe_convert_to_perf_probe(struct probe_trace_point *tp,
 
 	if (ret <= 0) {
 error:
-		pr_debug("Failed to find corresponding probes from "
-			 "debuginfo. Use kprobe event information.\n");
-		return convert_to_perf_probe_point(tp, pp);
+		pr_debug("Failed to find corresponding probes from debuginfo.\n");
+		return ret ? : -ENOENT;
 	}
 	pp->retprobe = tp->retprobe;
 
@@ -765,21 +733,11 @@ int show_available_vars(struct perf_probe_event *pevs, int npevs,
 
 #else	/* !HAVE_DWARF_SUPPORT */
 
-static int kprobe_convert_to_perf_probe(struct probe_trace_point *tp,
-					struct perf_probe_point *pp)
+static int find_perf_probe_point_from_dwarf(struct probe_trace_point *tp,
+					    struct perf_probe_point *pp,
+					    bool is_kprobe)
 {
-	struct symbol *sym;
-
-	if (tp->symbol) {
-		sym = __find_kernel_function_by_name(tp->symbol, NULL);
-		if (!sym) {
-			pr_err("Failed to find symbol %s in kernel.\n",
-				tp->symbol);
-			return -ENOENT;
-		}
-	}
-
-	return convert_to_perf_probe_point(tp, pp);
+	return -ENOSYS;
 }
 
 static int try_to_find_probe_trace_events(struct perf_probe_event *pev,
@@ -1591,6 +1549,78 @@ error:
 	return NULL;
 }
 
+static int find_perf_probe_point_from_map(struct probe_trace_point *tp,
+					  struct perf_probe_point *pp,
+					  bool is_kprobe)
+{
+	struct symbol *sym = NULL;
+	struct map *map = NULL;
+	u64 addr;
+	int ret = 0;
+
+	if (is_kprobe)
+		sym = __find_kernel_function(tp->address, &map);
+	else if (tp->module) {
+		map = dso__new_map(tp->module);
+		if (map)
+			sym = map__find_symbol(map, tp->address, NULL);
+	}
+
+	if (!sym) {
+		pr_debug("Failed to find symbol at %lx from map.\n",
+			 tp->address);
+		ret = -ENOMEM;
+	} else {
+		addr = map->unmap_ip(map, sym->start);
+		pp->offset = tp->address - addr;
+		pp->function = strdup(sym->name);
+		if (!pp->function)
+			ret = -ENOMEM;
+	}
+
+	if (map && !is_kprobe) {
+		dso__delete(map->dso);
+		map__delete(map);
+	}
+	pp->retprobe = tp->retprobe;
+
+	return ret;
+}
+
+static int convert_to_perf_probe_point(struct probe_trace_point *tp,
+					struct perf_probe_point *pp,
+					bool is_kprobe)
+{
+	char buf[128];
+	int ret;
+
+	ret = find_perf_probe_point_from_dwarf(tp, pp, is_kprobe);
+	if (!ret)
+		return 0;
+	if (!tp->symbol) {
+		ret = find_perf_probe_point_from_map(tp, pp, is_kprobe);
+		if (!ret)
+			return 0;
+	}
+
+	if (tp->symbol) {
+		pp->function = strdup(tp->symbol);
+		pp->offset = tp->offset;
+	} else if (!tp->module && !is_kprobe) {
+		ret = e_snprintf(buf, 128, "0x%" PRIx64, (u64)tp->address);
+		if (ret < 0)
+			return ret;
+		pp->function = strdup(buf);
+		pp->offset = 0;
+	}
+	if (pp->function == NULL)
+		return -ENOMEM;
+
+	pp->retprobe = tp->retprobe;
+
+	return 0;
+}
+
 static int convert_to_perf_probe_event(struct probe_trace_event *tev,
 			       struct perf_probe_event *pev, bool is_kprobe)
 {
@@ -1604,11 +1634,7 @@ static int convert_to_perf_probe_event(struct probe_trace_event *tev,
 		return -ENOMEM;
 
 	/* Convert trace_point to probe_point */
-	if (is_kprobe)
-		ret = kprobe_convert_to_perf_probe(&tev->point, &pev->point);
-	else
-		ret = convert_to_perf_probe_point(&tev->point, &pev->point);
-
+	ret = convert_to_perf_probe_point(&tev->point, &pev->point, is_kprobe);
 	if (ret < 0)
 		return ret;
 
