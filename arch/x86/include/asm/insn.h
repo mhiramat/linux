@@ -33,6 +33,17 @@ struct insn_field {
 	unsigned char nbytes;
 };
 
+/* Return ture if field has given byte pattern */
+static inline int insn_field_has(struct insn_field *field, insn_byte_t ptn)
+{
+	int i;
+
+	for (i = 0; i < field->nbytes; i++)
+		if (field->bytes[i] == ptn)
+			return 1;
+	return 0;
+}
+
 struct insn {
 	struct insn_field prefixes;	/*
 					 * Prefixes

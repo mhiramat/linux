@@ -163,37 +163,32 @@ NOKPROBE_SYMBOL(skip_prefixes);
  * Returns non-zero if opcode is boostable.
  * RIP relative instructions are adjusted at copying time in 64 bits mode
  */
-int can_boost(kprobe_opcode_t *opcodes)
+int can_boost(struct insn *insn)
 {
-	kprobe_opcode_t opcode;
-	kprobe_opcode_t *orig_opcodes = opcodes;
+	insn_byte_t opcode;
 
-	if (search_exception_tables((unsigned long)opcodes))
+	if (search_exception_tables((unsigned long)insn->kaddr))
 		return 0;	/* Page fault may occur on this address. */
 
-retry:
-	if (opcodes - orig_opcodes > MAX_INSN_SIZE - 1)
+	if (insn->opcode.nbytes > 2)
+		return 0;	/* Booster doesn't support 3 bytes opcodes */
+
+	/* CS override prefix and Address-size prefix are not boostable */
+	if (insn_field_has(&insn->prefixes, 0x2e) ||
+	    insn_field_has(&insn->prefixes, 0x67))
 		return 0;
-	opcode = *(opcodes++);
 
-	/* 2nd-byte opcode */
-	if (opcode == 0x0f) {
-		if (opcodes - orig_opcodes > MAX_INSN_SIZE - 1)
-			return 0;
-		return test_bit(*opcodes,
+	/* 2-bytes opcodes */
+	if (insn->opcode.nbytes == 2)
+		return test_bit(insn->opcode.bytes[1],
 				(unsigned long *)twobyte_is_boostable);
-	}
 
+	/* 1-byte opcodes */
+	opcode = insn->opcode.bytes[0];
 	switch (opcode & 0xf0) {
-#ifdef CONFIG_X86_64
-	case 0x40:
-		goto retry; /* REX prefix is boostable */
-#endif
 	case 0x60:
-		if (0x63 < opcode && opcode < 0x67)
-			goto retry; /* prefixes */
-		/* can't boost Address-size override and bound */
-		return (opcode != 0x62 && opcode != 0x67);
+		/* can't boost bound */
+		return opcode != 0x67;
 	case 0x70:
 		return 0; /* can't boost conditional jump */
 	case 0xc0:
@@ -206,16 +201,11 @@ retry:
 		/* can boost in/out and absolute jmps */
 		return ((opcode & 0x04) || opcode == 0xea);
 	case 0xf0:
-		if ((opcode & 0x0c) == 0 && opcode != 0xf1)
-			goto retry; /* lock/rep(ne) prefix */
 		/* clear and set flags are boostable */
 		return (opcode == 0xf5 || (0xf7 < opcode && opcode < 0xfe));
 	default:
-		/* segment override prefixes are boostable */
-		if (opcode == 0x26 || opcode == 0x36 || opcode == 0x3e)
-			goto retry; /* prefixes */
-		/* CS override prefix and call are not boostable */
-		return (opcode != 0x2e && opcode != 0x9a);
+		/* Call is not boostable */
+		return opcode != 0x9a;
 	}
 }
 
@@ -303,12 +293,10 @@ static int can_probe(unsigned long paddr)
 /*
  * Returns non-zero if opcode modifies the interrupt flag.
  */
-static int is_IF_modifier(kprobe_opcode_t *insn)
+static int is_IF_modifier(struct insn *insn)
 {
-	/* Skip prefixes */
-	insn = skip_prefixes(insn);
-
-	switch (*insn) {
+	/* TBD: we should provide some macros for instructions */
+	switch (insn->opcode.bytes[0]) {
 	case 0xfa:		/* cli */
 	case 0xfb:		/* sti */
 	case 0xcf:		/* iret/iretd */
@@ -326,24 +314,23 @@ static int is_IF_modifier(kprobe_opcode_t *insn)
  * If not, return null.
  * Only applicable to 64-bit x86.
  */
-int __copy_instruction(u8 *dest, u8 *src)
+int __copy_instruction(u8 *dest, u8 *src, struct insn *insn)
 {
-	struct insn insn;
 	kprobe_opcode_t buf[MAX_INSN_SIZE];
 
-	kernel_insn_init(&insn, (void *)recover_probed_instruction(buf, (unsigned long)src));
-	insn_get_length(&insn);
+	kernel_insn_init(insn, (void *)recover_probed_instruction(buf, (unsigned long)src));
+	insn_get_length(insn);
 	/* Another subsystem puts a breakpoint, failed to recover */
-	if (insn.opcode.bytes[0] == BREAKPOINT_INSTRUCTION)
+	if (insn->opcode.bytes[0] == BREAKPOINT_INSTRUCTION)
 		return 0;
-	memcpy(dest, insn.kaddr, insn.length);
+	memcpy(dest, insn->kaddr, insn->length);
 
 #ifdef CONFIG_X86_64
-	if (insn_rip_relative(&insn)) {
+	if (insn_rip_relative(insn)) {
 		s64 newdisp;
 		u8 *disp;
-		kernel_insn_init(&insn, dest);
-		insn_get_displacement(&insn);
+		kernel_insn_init(insn, dest);
+		insn_get_displacement(insn);
 		/*
 		 * The copied instruction uses the %rip-relative addressing
 		 * mode.  Adjust the displacement for the difference between
@@ -356,25 +343,27 @@ int __copy_instruction(u8 *dest, u8 *src)
 		 * extension of the original signed 32-bit displacement would
 		 * have given.
 		 */
-		newdisp = (u8 *) src + (s64) insn.displacement.value - (u8 *) dest;
+		newdisp = (u8 *) src + (s64) insn->displacement.value - (u8 *) dest;
 		if ((s64) (s32) newdisp != newdisp) {
 			pr_err("Kprobes error: new displacement does not fit into s32 (%llx)\n", newdisp);
-			pr_err("\tSrc: %p, Dest: %p, old disp: %x\n", src, dest, insn.displacement.value);
+			pr_err("\tSrc: %p, Dest: %p, old disp: %x\n", src, dest, insn->displacement.value);
 			return 0;
 		}
-		disp = (u8 *) dest + insn_offset_displacement(&insn);
+		disp = (u8 *) dest + insn_offset_displacement(insn);
 		*(s32 *) disp = (s32) newdisp;
+		insn->displacement.value = (insn_value_t) newdisp;
 	}
 #endif
-	return insn.length;
+	return insn->length;
 }
 
 static int arch_copy_kprobe(struct kprobe *p)
 {
 	int ret;
+	struct insn insn;
 
 	/* Copy an instruction with recovering if other optprobe modifies it.*/
-	ret = __copy_instruction(p->ainsn.insn, p->addr);
+	ret = __copy_instruction(p->ainsn.insn, p->addr, &insn);
 	if (!ret)
 		return -EINVAL;
 
@@ -382,13 +371,13 @@ static int arch_copy_kprobe(struct kprobe *p)
 	 * __copy_instruction can modify the displacement of the instruction,
 	 * but it doesn't affect boostable check.
 	 */
-	if (can_boost(p->ainsn.insn))
+	if (can_boost(&insn))
 		p->ainsn.boostable = 0;
 	else
 		p->ainsn.boostable = -1;
 
 	/* Check whether the instruction modifies Interrupt Flag or not */
-	p->ainsn.if_modifier = is_IF_modifier(p->ainsn.insn);
+	p->ainsn.if_modifier = is_IF_modifier(&insn);
 
 	/* Also, displacement change doesn't affect the first byte */
 	p->opcode = p->ainsn.insn[0];
