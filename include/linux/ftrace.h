@@ -105,6 +105,7 @@ enum {
 	FTRACE_OPS_FL_STUB			= 1 << 7,
 	FTRACE_OPS_FL_INITIALIZED		= 1 << 8,
 	FTRACE_OPS_FL_DELETED			= 1 << 9,
+	FTRACE_OPS_FL_IP_MODIFY			= 1 << 10,
 };
 
 /*
