@@ -24,3 +24,4 @@ config.mak.autogen
 *-flex.*
 *.pyc
 *.pyo
+config/feature-checks/test-*
