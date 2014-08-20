@@ -915,9 +915,92 @@ static struct kprobe *alloc_aggr_kprobe(struct kprobe *p)
 #ifdef CONFIG_KPROBES_ON_FTRACE
 static struct ftrace_ops kprobe_ftrace_ops __read_mostly = {
 	.func = kprobe_ftrace_handler,
-	.flags = FTRACE_OPS_FL_SAVE_REGS | FTRACE_OPS_FL_IPMODIFY,
+	.flags = FTRACE_OPS_FL_SAVE_REGS,
 };
 static int kprobe_ftrace_enabled;
+
+static void kprobe_ftrace_stub(unsigned long a0, unsigned long a1,
+			struct ftrace_ops *op, struct pt_regs *regs)
+{
+	/* Do nothing. This is just a dummy handler */
+}
+
+/* This is only for checking conflict with other ftrace users */
+static struct ftrace_ops kprobe_ipmod_ftrace_ops __read_mostly = {
+	.func = kprobe_ftrace_stub,
+	.flags = FTRACE_OPS_FL_SAVE_REGS | FTRACE_OPS_FL_IPMODIFY,
+};
+static int kprobe_ipmod_ftrace_enabled;
+
+static int __ftrace_add_filter_ip(struct ftrace_ops *ops, unsigned long ip,
+				  int *ref)
+{
+	int ret;
+
+	/* Try to set given ip to filter */
+	ret = ftrace_set_filter_ip(ops, ip, 0, 0);
+	if (ret < 0)
+		return ret;
+
+	if (*ref == 0) {
+		ret = register_ftrace_function(ops);
+		if (ret < 0) {
+			/* Rollback the filter */
+			ftrace_set_filter_ip(ops, ip, 1, 0);
+			goto out;
+		}
+	}
+	(*ref)++;
+
+out:
+	return ret;
+}
+
+static int __ftrace_remove_filter_ip(struct ftrace_ops *ops, unsigned long ip,
+				     int *ref)
+{
+	int ret;
+
+	if (*ref == 1) {
+		ret = unregister_ftrace_function(ops);
+		if (ret < 0)
+			return ret;
+		/*Ignore failure, because it is already unregistered */
+		ftrace_set_filter_ip(ops, ip, 1, 0);
+	} else {
+		/* Try to remove given ip to filter */
+		ret = ftrace_set_filter_ip(ops, ip, 1, 0);
+		if (ret < 0)
+			return ret;
+	}
+
+	(*ref)--;
+
+	return 0;
+}
+
+static int try_reserve_ftrace_ipmodify(struct kprobe *p)
+{
+	if (!p->break_handler)
+		return 0;
+
+	return __ftrace_add_filter_ip(&kprobe_ipmod_ftrace_ops,
+				      (unsigned long)p->addr,
+				      &kprobe_ipmod_ftrace_enabled);
+}
+
+static void release_ftrace_ipmodify(struct kprobe *p)
+{
+	int ret;
+
+	if (p->break_handler) {
+		ret = __ftrace_remove_filter_ip(&kprobe_ipmod_ftrace_ops,
+						(unsigned long)p->addr,
+						&kprobe_ipmod_ftrace_enabled);
+		WARN(ret < 0, "Failed to release ftrace at %p (%d)\n",
+		     p->addr, ret);
+	}
+}
 
 /* Must ensure p->addr is really on ftrace */
 static int prepare_kprobe(struct kprobe *p)
@@ -933,14 +1016,10 @@ static void arm_kprobe_ftrace(struct kprobe *p)
 {
 	int ret;
 
-	ret = ftrace_set_filter_ip(&kprobe_ftrace_ops,
-				   (unsigned long)p->addr, 0, 0);
+	ret = __ftrace_add_filter_ip(&kprobe_ftrace_ops,
+				     (unsigned long)p->addr,
+				     &kprobe_ftrace_enabled);
 	WARN(ret < 0, "Failed to arm kprobe-ftrace at %p (%d)\n", p->addr, ret);
-	kprobe_ftrace_enabled++;
-	if (kprobe_ftrace_enabled == 1) {
-		ret = register_ftrace_function(&kprobe_ftrace_ops);
-		WARN(ret < 0, "Failed to init kprobe-ftrace (%d)\n", ret);
-	}
 }
 
 /* Caller must lock kprobe_mutex */
@@ -948,17 +1027,16 @@ static void disarm_kprobe_ftrace(struct kprobe *p)
 {
 	int ret;
 
-	kprobe_ftrace_enabled--;
-	if (kprobe_ftrace_enabled == 0) {
-		ret = unregister_ftrace_function(&kprobe_ftrace_ops);
-		WARN(ret < 0, "Failed to init kprobe-ftrace (%d)\n", ret);
-	}
-	ret = ftrace_set_filter_ip(&kprobe_ftrace_ops,
-			   (unsigned long)p->addr, 1, 0);
-	WARN(ret < 0, "Failed to disarm kprobe-ftrace at %p (%d)\n", p->addr, ret);
+	ret = __ftrace_remove_filter_ip(&kprobe_ftrace_ops,
+					(unsigned long)p->addr,
+					&kprobe_ftrace_enabled);
+	WARN(ret < 0, "Failed to disarm kprobe-ftrace at %p (%d)\n",
+	     p->addr, ret);
 }
 #else	/* !CONFIG_KPROBES_ON_FTRACE */
 #define prepare_kprobe(p)	arch_prepare_kprobe(p)
+#define try_reserve_ftrace_ipmodify(p)	(0)
+#define release_ftrace_ipmodify(p)	do {} while (0)
 #define arm_kprobe_ftrace(p)	do {} while (0)
 #define disarm_kprobe_ftrace(p)	do {} while (0)
 #endif
@@ -1502,6 +1580,14 @@ int register_kprobe(struct kprobe *p)
 	mutex_lock(&kprobe_mutex);
 
 	old_p = get_kprobe(p->addr);
+
+	/* Try to reserve ftrace ipmodify if needed */
+	if (kprobe_ftrace(p) && (!old_p || !old_p->break_handler)) {
+		ret = try_reserve_ftrace_ipmodify(p);
+		if (ret < 0)
+			goto out_noreserve;
+	}
+
 	if (old_p) {
 		/* Since this may unoptimize old_p, locking text_mutex. */
 		ret = register_aggr_kprobe(old_p, p);
@@ -1525,6 +1611,9 @@ int register_kprobe(struct kprobe *p)
 	try_to_optimize_kprobe(p);
 
 out:
+	if (ret < 0 && kprobe_ftrace(p))
+		release_ftrace_ipmodify(p);
+out_noreserve:
 	mutex_unlock(&kprobe_mutex);
 
 	if (probed_mod)
@@ -1638,6 +1727,10 @@ disarmed:
 static void __unregister_kprobe_bottom(struct kprobe *p)
 {
 	struct kprobe *ap;
+
+	/* Release reserved ftrace ipmodify if needed */
+	if (kprobe_ftrace(p))
+		release_ftrace_ipmodify(p);
 
 	if (list_empty(&p->list))
 		/* This is an independent kprobe */

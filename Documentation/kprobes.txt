@@ -264,15 +264,13 @@ stop-machine method that ksplice uses for supporting a CONFIG_PREEMPT=y
 kernel.
 
 NOTE for geeks:
-The jump optimization changes the kprobe's pre_handler behavior.
-Without optimization, the pre_handler can change the kernel's execution
+The jump optimization (and ftrace-based kprobes) changes the kprobe's
+pre_handler behavior.
+Without optimizations, the pre_handler can change the kernel's execution
 path by changing regs->ip and returning 1.  However, when the probe
 is optimized, that modification is ignored.  Thus, if you want to
-tweak the kernel's execution path, you need to suppress optimization,
-using one of the following techniques:
-- Specify an empty function for the kprobe's post_handler or break_handler.
- or
-- Execute 'sysctl -w debug.kprobes_optimization=n'
+tweak the kernel's execution path, you need to suppress optimization or
+notify your handler will modify regs->ip by setting p->break_handler.
 
 1.5 Blacklist
 
