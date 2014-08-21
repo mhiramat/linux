@@ -754,7 +754,7 @@ static int __try_stop_module(void *_sref)
 	struct stopref *sref = _sref;
 
 	/* If it's not unused, quit unless we're forcing. */
-	if (module_refcount(sref->mod) != 0) {
+	if (module_is_locked(sref->mod) || module_refcount(sref->mod) != 0) {
 		if (!(*sref->forced = try_force_unload(sref->flags)))
 			return -EWOULDBLOCK;
 	}
@@ -831,7 +831,8 @@ SYSCALL_DEFINE2(delete_module, const char __user *, name_user,
 	}
 
 	/* Doing init or already dying? */
-	if (mod->state != MODULE_STATE_LIVE) {
+	if (mod->state != MODULE_STATE_LIVE &&
+	    mod->state != MODULE_STATE_LOCKDOWN) {
 		/* FIXME: if (force), slam module count damn the torpedoes */
 		pr_debug("%s already dying\n", mod->name);
 		ret = -EBUSY;
@@ -948,6 +949,9 @@ bool try_module_get(struct module *module)
 	bool ret = true;
 
 	if (module) {
+		if (module_is_locked(module))
+			goto end;
+
 		preempt_disable();
 
 		if (likely(module_is_live(module))) {
@@ -958,13 +962,14 @@ bool try_module_get(struct module *module)
 
 		preempt_enable();
 	}
+end:
 	return ret;
 }
 EXPORT_SYMBOL(try_module_get);
 
 void module_put(struct module *module)
 {
-	if (module) {
+	if (module && !module_is_locked(module)) {
 		preempt_disable();
 		smp_wmb(); /* see comment in module_refcount */
 		__this_cpu_inc(module->refptr->decs);
@@ -1027,6 +1032,7 @@ static ssize_t show_initstate(struct module_attribute *mattr,
 
 	switch (mk->mod->state) {
 	case MODULE_STATE_LIVE:
+	case MODULE_STATE_LOCKDOWN:
 		state = "live";
 		break;
 	case MODULE_STATE_COMING:
@@ -2985,6 +2991,7 @@ static bool finished_loading(const char *name)
 	mutex_lock(&module_mutex);
 	mod = find_module_all(name, strlen(name), true);
 	ret = !mod || mod->state == MODULE_STATE_LIVE
+		|| mod->state == MODULE_STATE_LOCKDOWN
 		|| mod->state == MODULE_STATE_GOING;
 	mutex_unlock(&module_mutex);
 
@@ -3003,7 +3010,7 @@ static void do_mod_ctors(struct module *mod)
 }
 
 /* This is where the real work happens */
-static int do_init_module(struct module *mod)
+static int do_init_module(struct module *mod, bool locked)
 {
 	int ret = 0;
 
@@ -3038,7 +3045,7 @@ static int do_init_module(struct module *mod)
 	}
 
 	/* Now it's a first class citizen! */
-	mod->state = MODULE_STATE_LIVE;
+	mod->state = locked ? MODULE_STATE_LOCKDOWN : MODULE_STATE_LIVE;
 	blocking_notifier_call_chain(&module_notify_list,
 				     MODULE_STATE_LIVE, mod);
 
@@ -3294,7 +3301,7 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	/* Done! */
 	trace_module_load(mod);
 
-	return do_init_module(mod);
+	return do_init_module(mod, flags & MODULE_INIT_LOCKDOWN);
 
  bug_cleanup:
 	/* module_bug_cleanup needs module_mutex protection */
@@ -3357,8 +3364,9 @@ SYSCALL_DEFINE3(finit_module, int, fd, const char __user *, uargs, int, flags)
 
 	pr_debug("finit_module: fd=%d, uargs=%p, flags=%i\n", fd, uargs, flags);
 
-	if (flags & ~(MODULE_INIT_IGNORE_MODVERSIONS
-		      |MODULE_INIT_IGNORE_VERMAGIC))
+	if (flags & ~(MODULE_INIT_IGNORE_MODVERSIONS |
+		      MODULE_INIT_IGNORE_VERMAGIC |
+		      MODULE_INIT_LOCKDOWN))
 		return -EINVAL;
 
 	err = copy_module_from_fd(fd, &info);
@@ -3602,10 +3610,14 @@ static char *module_flags(struct module *mod, char *buf)
 
 	BUG_ON(mod->state == MODULE_STATE_UNFORMED);
 	if (mod->taints ||
+	    mod->state == MODULE_STATE_LOCKDOWN ||
 	    mod->state == MODULE_STATE_GOING ||
 	    mod->state == MODULE_STATE_COMING) {
 		buf[bx++] = '(';
 		bx += module_flags_taint(mod, buf + bx);
+		/* Show a - for module-is-locked */
+		if (mod->state == MODULE_STATE_LOCKDOWN)
+			buf[bx++] = '*';
 		/* Show a - for module-is-being-unloaded */
 		if (mod->state == MODULE_STATE_GOING)
 			buf[bx++] = '-';

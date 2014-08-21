@@ -205,6 +205,7 @@ struct module_use {
 
 enum module_state {
 	MODULE_STATE_LIVE,	/* Normal state. */
+	MODULE_STATE_LOCKDOWN,	/* Module is never removed except forced */
 	MODULE_STATE_COMING,	/* Full formed, running module_init. */
 	MODULE_STATE_GOING,	/* Going away. */
 	MODULE_STATE_UNFORMED,	/* Still setting it up. */
@@ -388,6 +389,11 @@ extern struct mutex module_mutex;
 static inline int module_is_live(struct module *mod)
 {
 	return mod->state != MODULE_STATE_GOING;
+}
+
+static inline int module_is_locked(struct module *mod)
+{
+	return mod->state == MODULE_STATE_LOCKDOWN;
 }
 
 struct module *__module_text_address(unsigned long addr);
