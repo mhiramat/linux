@@ -776,7 +776,7 @@ int show_available_vars(struct perf_probe_event *pevs, int npevs,
 	int i, ret = 0;
 	struct debuginfo *dinfo;
 
-	ret = init_symbol_maps(false);
+	ret = init_symbol_maps(pevs->uprobes);
 	if (ret < 0)
 		return ret;
 
