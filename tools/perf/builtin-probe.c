@@ -590,9 +590,6 @@ __cmd_probe(int argc, const char **argv, const char *prefix __maybe_unused)
 		verbose = -1;
 	}
 
-	if (probe_conf.max_probes == 0)
-		probe_conf.max_probes = MAX_PROBES;
-
 	/*
 	 * Only consider the user's kernel image path if given.
 	 */

@@ -51,7 +51,9 @@
 #define PERFPROBE_GROUP "probe"
 
 bool probe_event_dry_run;	/* Dry run flag */
-struct probe_conf probe_conf;
+struct probe_conf probe_conf = {
+	.max_probes = MAX_PROBES,
+};
 
 #define semantic_error(msg ...) pr_err("Semantic error :" msg)
 
