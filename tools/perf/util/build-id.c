@@ -144,7 +144,8 @@ static int asnprintf(char **strp, size_t size, const char *fmt, ...)
 	return ret;
 }
 
-static char *build_id__filename(const char *sbuild_id, char *bf, size_t size)
+static char *build_id_cache__linkname(const char *sbuild_id, char *bf,
+				      size_t size)
 {
 	char *tmp = bf;
 	int ret = asnprintf(&bf, size, "%s/.build-id/%.2s/%s", buildid_dir,
@@ -154,15 +155,35 @@ static char *build_id__filename(const char *sbuild_id, char *bf, size_t size)
 	return bf;
 }
 
+static const char *build_id_cache__basename(bool is_kallsyms, bool is_vdso)
+{
+	return is_kallsyms ? "kallsyms" : (is_vdso ? "vdso" : "elf");
+}
+
 char *dso__build_id_filename(const struct dso *dso, char *bf, size_t size)
 {
-	char build_id_hex[SBUILD_ID_SIZE];
+	bool is_kallsyms = dso__is_kallsyms((struct dso *)dso);
+	bool is_vdso = dso__is_vdso((struct dso *)dso);
+	char sbuild_id[SBUILD_ID_SIZE];
+	char *linkname;
+	bool alloc = (bf == NULL);
+	int ret;
 
 	if (!dso->has_build_id)
 		return NULL;
 
-	build_id__sprintf(dso->build_id, sizeof(dso->build_id), build_id_hex);
-	return build_id__filename(build_id_hex, bf, size);
+	build_id__sprintf(dso->build_id, sizeof(dso->build_id), sbuild_id);
+	linkname = build_id_cache__linkname(sbuild_id, NULL, 0);
+	if (!linkname)
+		return NULL;
+
+	ret = asnprintf(&bf, size, "%s/%s", linkname,
+			 build_id_cache__basename(is_kallsyms, is_vdso));
+	if (ret < 0 || (!alloc && size < (unsigned int)ret))
+		bf = NULL;
+	free(linkname);
+
+	return bf;
 }
 
 bool dso__build_id_is_kmod(const struct dso *dso, char *bf, size_t size)
@@ -341,7 +362,8 @@ void disable_buildid_cache(void)
 }
 
 static char *build_id_cache__dirname_from_path(const char *name,
-					       bool is_kallsyms, bool is_vdso)
+					       bool is_kallsyms, bool is_vdso,
+					       const char *sbuild_id)
 {
 	char *realname = (char *)name, *filename;
 	bool slash = is_kallsyms || is_vdso;
@@ -352,8 +374,9 @@ static char *build_id_cache__dirname_from_path(const char *name,
 			return NULL;
 	}
 
-	if (asprintf(&filename, "%s%s%s", buildid_dir, slash ? "/" : "",
-		     is_vdso ? DSO__NAME_VDSO : realname) < 0)
+	if (asprintf(&filename, "%s%s%s%s%s", buildid_dir, slash ? "/" : "",
+		     is_vdso ? DSO__NAME_VDSO : realname,
+		     sbuild_id ? "/" : "", sbuild_id ?: "") < 0)
 		filename = NULL;
 
 	if (!slash)
@@ -372,7 +395,8 @@ int build_id_cache__list_build_ids(const char *pathname,
 	int ret = 0;
 
 	list = strlist__new(NULL, NULL);
-	dir_name = build_id_cache__dirname_from_path(pathname, false, false);
+	dir_name = build_id_cache__dirname_from_path(pathname, false, false,
+						     NULL);
 	if (!list || !dir_name) {
 		ret = -ENOMEM;
 		goto out;
@@ -407,7 +431,7 @@ int build_id_cache__add_s(const char *sbuild_id, const char *name,
 {
 	const size_t size = PATH_MAX;
 	char *realname = NULL, *filename = NULL, *dir_name = NULL,
-	     *linkname = zalloc(size), *targetname, *tmp;
+	     *linkname = zalloc(size), *tmp;
 	int err = -1;
 
 	if (!is_kallsyms) {
@@ -416,14 +440,17 @@ int build_id_cache__add_s(const char *sbuild_id, const char *name,
 			goto out_free;
 	}
 
-	dir_name = build_id_cache__dirname_from_path(name, is_kallsyms, is_vdso);
+	dir_name = build_id_cache__dirname_from_path(name, is_kallsyms,
+						     is_vdso, sbuild_id);
 	if (!dir_name)
 		goto out_free;
 
 	if (mkdir_p(dir_name, 0755))
 		goto out_free;
 
-	if (asprintf(&filename, "%s/%s", dir_name, sbuild_id) < 0) {
+	/* Save the allocated buildid dirname */
+	if (asprintf(&filename, "%s/%s", dir_name,
+		     build_id_cache__basename(is_kallsyms, is_vdso)) < 0) {
 		filename = NULL;
 		goto out_free;
 	}
@@ -437,7 +464,7 @@ int build_id_cache__add_s(const char *sbuild_id, const char *name,
 			goto out_free;
 	}
 
-	if (!build_id__filename(sbuild_id, linkname, size))
+	if (!build_id_cache__linkname(sbuild_id, linkname, size))
 		goto out_free;
 	tmp = strrchr(linkname, '/');
 	*tmp = '\0';
@@ -446,10 +473,10 @@ int build_id_cache__add_s(const char *sbuild_id, const char *name,
 		goto out_free;
 
 	*tmp = '/';
-	targetname = filename + strlen(buildid_dir) - 5;
-	memcpy(targetname, "../..", 5);
+	tmp = dir_name + strlen(buildid_dir) - 5;
+	memcpy(tmp, "../..", 5);
 
-	if (symlink(targetname, linkname) == 0)
+	if (symlink(tmp, linkname) == 0)
 		err = 0;
 out_free:
 	if (!is_kallsyms)
@@ -474,7 +501,7 @@ static int build_id_cache__add_b(const u8 *build_id, size_t build_id_size,
 bool build_id_cache__cached(const char *sbuild_id)
 {
 	bool ret = false;
-	char *filename = build_id__filename(sbuild_id, NULL, 0);
+	char *filename = build_id_cache__linkname(sbuild_id, NULL, 0);
 
 	if (filename && !access(filename, F_OK))
 		ret = true;
@@ -493,7 +520,7 @@ int build_id_cache__remove_s(const char *sbuild_id)
 	if (filename == NULL || linkname == NULL)
 		goto out_free;
 
-	if (!build_id__filename(sbuild_id, linkname, size))
+	if (!build_id_cache__linkname(sbuild_id, linkname, size))
 		goto out_free;
 
 	if (access(linkname, F_OK))
@@ -511,7 +538,7 @@ int build_id_cache__remove_s(const char *sbuild_id)
 	tmp = strrchr(linkname, '/') + 1;
 	snprintf(tmp, size - (tmp - linkname), "%s", filename);
 
-	if (unlink(linkname))
+	if (rm_rf(linkname))
 		goto out_free;
 
 	err = 0;
@@ -523,7 +550,7 @@ out_free:
 
 static int dso__cache_build_id(struct dso *dso, struct machine *machine)
 {
-	bool is_kallsyms = dso->kernel && dso->long_name[0] != '/';
+	bool is_kallsyms = dso__is_kallsyms(dso);
 	bool is_vdso = dso__is_vdso(dso);
 	const char *name = dso->long_name;
 	char nm[PATH_MAX];
