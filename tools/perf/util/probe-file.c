@@ -770,7 +770,7 @@ int probe_cache__show_all_caches(struct strfilter *filter)
 	pr_debug("list cache with filter: %s\n", buf);
 	free(buf);
 
-	ret = build_id_cache__list_all(&bidlist);
+	ret = build_id_cache__list_all(&bidlist, false);
 	if (ret < 0) {
 		pr_debug("Failed to get buildids: %d\n", ret);
 		return ret == -ENOENT ? 0 : ret;

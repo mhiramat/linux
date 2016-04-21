@@ -32,7 +32,7 @@ char *build_id_cache__origname(const char *sbuild_id);
 char *build_id_cache__linkname(const char *sbuild_id, char *bf, size_t size);
 char *build_id_cache__dirname_from_path(const char *sbuild_id, const char *name,
 					bool is_kallsyms, bool is_vdso);
-int build_id_cache__list_all(struct strlist **result);
+int build_id_cache__list_all(struct strlist **result, bool validonly);
 int build_id_cache__list_build_ids(const char *pathname,
 				   struct strlist **result);
 bool build_id_cache__cached(const char *sbuild_id);
