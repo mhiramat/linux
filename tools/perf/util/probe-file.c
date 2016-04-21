@@ -14,6 +14,7 @@
  * GNU General Public License for more details.
  *
  */
+#include <sys/uio.h>
 #include "util.h"
 #include "event.h"
 #include "strlist.h"
@@ -322,5 +323,303 @@ int probe_file__del_events(int fd, struct strfilter *filter)
 	ret = probe_file__del_strlist(fd, namelist);
 	strlist__delete(namelist);
 
+	return ret;
+}
+
+static void probe_cache_entry__delete(struct probe_cache_entry *node)
+{
+	if (!list_empty(&node->list))
+		list_del(&node->list);
+	if (node->tevlist)
+		strlist__delete(node->tevlist);
+	clear_perf_probe_event(&node->pev);
+	free(node->spev);
+	free(node);
+}
+
+static struct probe_cache_entry *
+probe_cache_entry__new(struct perf_probe_event *pev)
+{
+	struct probe_cache_entry *ret = zalloc(sizeof(*ret));
+
+	if (ret) {
+		INIT_LIST_HEAD(&ret->list);
+		ret->tevlist = strlist__new(NULL, NULL);
+		if (!ret->tevlist)
+			zfree(&ret);
+		if (ret && pev) {
+			ret->spev = synthesize_perf_probe_command(pev);
+			if (!ret->spev ||
+			    perf_probe_event__copy(&ret->pev, pev) < 0) {
+				probe_cache_entry__delete(ret);
+				return NULL;
+			}
+		}
+	}
+
+	return ret;
+}
+
+/* For the kernel probe caches, pass target = NULL */
+static int probe_cache__open(struct probe_cache *pcache, const char *target)
+{
+	char cpath[PATH_MAX];
+	char sbuildid[SBUILD_ID_SIZE];
+	char *dir_name;
+	bool is_kallsyms = !target;
+	int ret, fd;
+
+	if (target)
+		ret = filename__sprintf_build_id(target, sbuildid);
+	else {
+		target = "[kernel.kallsyms]";
+		ret = sysfs__sprintf_build_id("/", sbuildid);
+	}
+	if (ret < 0) {
+		pr_debug("Failed to get build-id from %s.\n", target ?: "kernel");
+		return ret;
+	}
+
+	/* If we have no buildid cache, make it */
+	if (!build_id_cache__cached(sbuildid)) {
+		ret = build_id_cache__add_s(sbuildid, target,
+					    is_kallsyms, NULL);
+		if (ret < 0) {
+			pr_debug("Failed to add build-id cache: %s\n", target);
+			return ret;
+		}
+	}
+
+	dir_name = build_id_cache__dirname_from_path(sbuildid, target,
+						     is_kallsyms, false);
+	if (!dir_name)
+		return -ENOMEM;
+
+	snprintf(cpath, PATH_MAX, "%s/probes", dir_name);
+	fd = open(cpath, O_CREAT | O_RDWR | O_APPEND, 0644);
+	if (fd < 0)
+		pr_debug("Failed to open cache(%d): %s\n", fd, cpath);
+	free(dir_name);
+	pcache->fd = fd;
+
+	return fd;
+}
+
+static int probe_cache__load(struct probe_cache *pcache)
+{
+	struct probe_cache_entry *entry = NULL;
+	char buf[MAX_CMDLEN], *p;
+	int ret = 0;
+	FILE *fp;
+
+	fp = fdopen(dup(pcache->fd), "r");
+	while (!feof(fp)) {
+		if (!fgets(buf, MAX_CMDLEN, fp))
+			break;
+		p = strchr(buf, '\n');
+		if (p)
+			*p = '\0';
+		if (buf[0] == '#') {	/* #perf_probe_event */
+			entry = probe_cache_entry__new(NULL);
+			entry->spev = strdup(buf + 1);
+			ret = parse_perf_probe_command(buf + 1, &entry->pev);
+			if (!entry->spev || ret < 0) {
+				probe_cache_entry__delete(entry);
+				goto out;
+			}
+			list_add_tail(&entry->list, &pcache->list);
+		} else {	/* trace_probe_event */
+			if (!entry) {
+				ret = -EINVAL;
+				goto out;
+			}
+			strlist__add(entry->tevlist, buf);
+		}
+	}
+out:
+	fclose(fp);
+	return ret;
+}
+
+static struct probe_cache *probe_cache__alloc(void)
+{
+	struct probe_cache *ret = zalloc(sizeof(*ret));
+
+	if (ret) {
+		INIT_LIST_HEAD(&ret->list);
+		ret->fd = -EINVAL;
+	}
+	return ret;
+}
+
+void probe_cache__delete(struct probe_cache *pcache)
+{
+	struct probe_cache_entry *entry;
+
+	if (!pcache)
+		return;
+
+	while (!list_empty(&pcache->list)) {
+		entry = list_first_entry(&pcache->list, typeof(*entry), list);
+		probe_cache_entry__delete(entry);
+	}
+	if (pcache->fd > 0)
+		close(pcache->fd);
+	free(pcache);
+}
+
+struct probe_cache *probe_cache__new(const char *target)
+{
+	struct probe_cache *pcache = probe_cache__alloc();
+	int ret;
+
+	if (!pcache)
+		return NULL;
+
+	ret = probe_cache__open(pcache, target);
+	if (ret < 0) {
+		pr_debug("Cache open error: %d\n", ret);
+		goto out_err;
+	}
+
+	ret = probe_cache__load(pcache);
+	if (ret < 0) {
+		pr_debug("Cache read error: %d\n", ret);
+		goto out_err;
+	}
+
+	return pcache;
+
+out_err:
+	probe_cache__delete(pcache);
+	return NULL;
+}
+
+static bool streql(const char *a, const char *b)
+{
+	if (a == b)
+		return true;
+
+	if (!a || !b)
+		return false;
+
+	return !strcmp(a, b);
+}
+
+static struct probe_cache_entry *
+probe_cache__find(struct probe_cache *pcache, struct perf_probe_event *pev)
+{
+	struct probe_cache_entry *entry = NULL;
+	char *cmd = NULL;
+
+	cmd = synthesize_perf_probe_command(pev);
+	if (!cmd)
+		return NULL;
+
+	list_for_each_entry(entry, &pcache->list, list) {
+		/* Hit if same event name or same command-string */
+		if ((pev->event &&
+		     (streql(entry->pev.group, pev->group) &&
+		      streql(entry->pev.event, pev->event))) ||
+		    (!strcmp(entry->spev, cmd)))
+			goto found;
+	}
+	entry = NULL;
+
+found:
+	free(cmd);
+	return entry;
+}
+
+int probe_cache__add_entry(struct probe_cache *pcache,
+			   struct perf_probe_event *pev,
+			   struct probe_trace_event *tevs, int ntevs)
+{
+	struct probe_cache_entry *entry = NULL;
+	char *command;
+	int i, ret = 0;
+
+	if (!pcache || !pev || !tevs || ntevs <= 0) {
+		ret = -EINVAL;
+		goto out_err;
+	}
+
+	/* Remove old cache entry */
+	entry = probe_cache__find(pcache, pev);
+	if (entry)
+		probe_cache_entry__delete(entry);
+
+	ret = -ENOMEM;
+	entry = probe_cache_entry__new(pev);
+	if (!entry)
+		goto out_err;
+
+	for (i = 0; i < ntevs; i++) {
+		if (!tevs[i].point.symbol)
+			continue;
+
+		command = synthesize_probe_trace_command(&tevs[i]);
+		if (!command)
+			goto out_err;
+		strlist__add(entry->tevlist, command);
+		free(command);
+	}
+	list_add_tail(&entry->list, &pcache->list);
+	pr_debug("Added probe cache: %d\n", ntevs);
+	return 0;
+
+out_err:
+	pr_debug("Failed to add probe caches\n");
+	if (entry)
+		probe_cache_entry__delete(entry);
+	return ret;
+}
+
+static int probe_cache_entry__write(struct probe_cache_entry *entry, int fd)
+{
+	struct str_node *snode;
+	struct iovec iov[3];
+	int ret;
+
+	pr_debug("Writing cache: #%s\n", entry->spev);
+	iov[0].iov_base = (void *)"#"; iov[0].iov_len = 1;
+	iov[1].iov_base = entry->spev; iov[1].iov_len = strlen(entry->spev);
+	iov[2].iov_base = (void *)"\n"; iov[2].iov_len = 1;
+	ret = writev(fd, iov, 3);
+	if (ret < 0)
+		return ret;
+
+	strlist__for_each(snode, entry->tevlist) {
+		iov[0].iov_base = (void *)snode->s;
+		iov[0].iov_len = strlen(snode->s);
+		iov[1].iov_base = (void *)"\n"; iov[1].iov_len = 1;
+		ret = writev(fd, iov, 2);
+		if (ret < 0)
+			return ret;
+	}
+	return 0;
+}
+
+int probe_cache__commit(struct probe_cache *pcache)
+{
+	struct probe_cache_entry *entry;
+	int ret = 0;
+
+	/* TBD: if we do not update existing entries, skip it */
+	ret = lseek(pcache->fd, 0, SEEK_SET);
+	if (ret < 0)
+		goto out;
+
+	ret = ftruncate(pcache->fd, 0);
+	if (ret < 0)
+		goto out;
+
+	list_for_each_entry(entry, &pcache->list, list) {
+		ret = probe_cache_entry__write(entry, pcache->fd);
+		pr_debug("Cache committed: %d\n", ret);
+		if (ret < 0)
+			break;
+	}
+out:
 	return ret;
 }
