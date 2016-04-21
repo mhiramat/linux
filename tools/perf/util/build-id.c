@@ -144,8 +144,7 @@ static int asnprintf(char **strp, size_t size, const char *fmt, ...)
 	return ret;
 }
 
-static char *build_id_cache__linkname(const char *sbuild_id, char *bf,
-				      size_t size)
+char *build_id_cache__linkname(const char *sbuild_id, char *bf, size_t size)
 {
 	char *tmp = bf;
 	int ret = asnprintf(&bf, size, "%s/.build-id/%.2s/%s", buildid_dir,
@@ -153,6 +152,29 @@ static char *build_id_cache__linkname(const char *sbuild_id, char *bf,
 	if (ret < 0 || (tmp && size < (unsigned int)ret))
 		return NULL;
 	return bf;
+}
+
+char *build_id_cache__origname(const char *sbuild_id)
+{
+	char *linkname;
+	char buf[PATH_MAX];
+	char *ret = NULL, *p;
+
+	linkname = build_id_cache__linkname(sbuild_id, NULL, 0);
+	if (!linkname)
+		return NULL;
+
+	if (readlink(linkname, buf, PATH_MAX) < 0)
+		goto out;
+	/* The link should be "../..<origpath>/<sbuild_id>" */
+	p = strrchr(buf, '/');	/* Cut off the "/<sbuild_id>" */
+	if (p) {
+		*p = '\0';
+		ret = strdup(buf + 5);	/* Skip "../.." */
+	}
+out:
+	free(linkname);
+	return ret;
 }
 
 static const char *build_id_cache__basename(bool is_kallsyms, bool is_vdso)
@@ -359,6 +381,59 @@ int dsos__hit_all(struct perf_session *session)
 void disable_buildid_cache(void)
 {
 	no_buildid_cache = true;
+}
+
+int build_id_cache__list_all(struct strlist **result)
+{
+	struct strlist *toplist, *list, *bidlist;
+	struct str_node *nd, *nd2;
+	char *topdir, *linkdir;
+	char sbuild_id[SBUILD_ID_SIZE];
+	int ret = 0;
+
+	/* Open the top-level directory */
+	if (asprintf(&topdir, "%s/.build-id/", buildid_dir) < 0)
+		return -errno;
+	toplist = lsdir(topdir, lsdir_no_dot_filter);
+	if (!toplist) {
+		pr_debug("Failed to opendir %s\n", topdir);
+		ret = -errno;
+		goto out;
+	}
+	bidlist = strlist__new(NULL, NULL);
+	strlist__for_each(nd, toplist) {
+		if (asprintf(&linkdir, "%s/%s", topdir, nd->s) < 0) {
+			ret = -errno;
+			goto out;
+		}
+		/* Open the lower-level directory */
+		list = lsdir(linkdir, lsdir_no_dot_filter);
+		if (!list) {
+			pr_debug("Failed to open %s: %d\n", linkdir, -errno);
+			goto next;
+		}
+		strlist__for_each(nd2, list) {
+			ret = snprintf(sbuild_id, SBUILD_ID_SIZE, "%s%s",
+					nd->s, nd2->s);
+			if (ret != SBUILD_ID_SIZE - 1) {
+				pr_debug("%s/%s is not buildid cache\n",
+					nd->s, nd2->s);
+				continue;
+			}
+			strlist__add(bidlist, sbuild_id);
+		}
+		strlist__delete(list);
+next:
+		free(linkdir);
+	}
+
+	*result = bidlist;
+out:
+	if (toplist)
+		strlist__delete(toplist);
+	free(topdir);
+
+	return ret;
 }
 
 char *build_id_cache__dirname_from_path(const char *sbuild_id, const char *name,
