@@ -79,6 +79,7 @@
 #include <termios.h>
 #include <linux/bitops.h>
 #include <termios.h>
+#include "strlist.h"
 
 extern const char *graph_line;
 extern const char *graph_dotted_line;
@@ -222,6 +223,9 @@ static inline int sane_case(int x, int high)
 
 int mkdir_p(char *path, mode_t mode);
 int rm_rf(char *path);
+struct strlist *lsdir(const char *dirname,
+		      bool (*filter)(const char *, struct dirent *));
+bool lsdir_no_dot_filter(const char *dirname __maybe_unused, struct dirent *d);
 int copyfile(const char *from, const char *to);
 int copyfile_mode(const char *from, const char *to, mode_t mode);
 int copyfile_offset(int fromfd, loff_t from_ofs, int tofd, loff_t to_ofs, u64 size);
