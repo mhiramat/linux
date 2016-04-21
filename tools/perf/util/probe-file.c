@@ -428,9 +428,12 @@ static int probe_cache__load(struct probe_cache *pcache)
 		p = strchr(buf, '\n');
 		if (p)
 			*p = '\0';
-		if (buf[0] == '#') {	/* #perf_probe_event */
+		/* #perf_probe_event or %sdt_event */
+		if (buf[0] == '#' || buf[0] == '%') {
 			entry = probe_cache_entry__new(NULL);
 			entry->spev = strdup(buf + 1);
+			if (buf[0] == '%')
+				entry->sdt = true;
 			ret = parse_perf_probe_command(buf + 1, &entry->pev);
 			if (!entry->spev || ret < 0) {
 				probe_cache_entry__delete(entry);
@@ -602,14 +605,72 @@ out_err:
 	return ret;
 }
 
+static unsigned long long sdt_note__get_addr(struct sdt_note *note)
+{
+	return note->bit32 ? (unsigned long long)note->addr.a32[0]
+		 : (unsigned long long)note->addr.a64[0];
+}
+
+int probe_cache__scan_sdt(struct probe_cache *pcache, const char *pathname)
+{
+	struct probe_cache_entry *entry = NULL;
+	struct list_head sdtlist;
+	struct sdt_note *note;
+	char *buf;
+	char sdtgrp[64];
+	int ret;
+
+	INIT_LIST_HEAD(&sdtlist);
+	ret = get_sdt_note_list(&sdtlist, pathname);
+	if (ret < 0) {
+		pr_debug("Failed to get sdt note: %d\n", ret);
+		return ret;
+	}
+	list_for_each_entry(note, &sdtlist, note_list) {
+		ret = snprintf(sdtgrp, 64, "sdt_%s", note->provider);
+		if (ret < 0)
+			break;
+		entry = probe_cache__find_by_name(pcache, sdtgrp, note->name);
+		if (entry)	/* We've already scanned */
+			continue;
+
+		entry = probe_cache_entry__new(NULL);
+		if (!entry) {
+			ret = -ENOMEM;
+			break;
+		}
+		entry->sdt = true;
+		ret = asprintf(&entry->spev, "%s:%s=%s", sdtgrp,
+				note->name, note->name);
+		if (ret < 0)
+			break;
+		entry->pev.event = strdup(note->name);
+		entry->pev.group = strdup(note->provider);
+		ret = asprintf(&buf, "p:%s/%s %s:0x%llx",
+				sdtgrp, note->name, pathname,
+				sdt_note__get_addr(note));
+		if (ret < 0)
+			break;
+		strlist__add(entry->tevlist, buf);
+		free(buf);
+		list_add_tail(&entry->list, &pcache->list);
+		entry = NULL;
+	}
+	if (entry)
+		probe_cache_entry__delete(entry);
+	cleanup_sdt_note_list(&sdtlist);
+	return ret;
+}
+
 static int probe_cache_entry__write(struct probe_cache_entry *entry, int fd)
 {
 	struct str_node *snode;
 	struct iovec iov[3];
+	const char *prefix = entry->sdt ? "%" : "#";
 	int ret;
 
-	pr_debug("Writing cache: #%s\n", entry->spev);
-	iov[0].iov_base = (void *)"#"; iov[0].iov_len = 1;
+	pr_debug("Writing cache: %s%s\n", prefix, entry->spev);
+	iov[0].iov_base = (void *)prefix; iov[0].iov_len = 1;
 	iov[1].iov_base = entry->spev; iov[1].iov_len = strlen(entry->spev);
 	iov[2].iov_base = (void *)"\n"; iov[2].iov_len = 1;
 	ret = writev(fd, iov, 3);
