@@ -1124,9 +1124,8 @@ static int activate_sdt_events(char *sys, char *event)
 	struct probe_cache_entry *entry;
 	struct strlist *bidlist;
 	struct str_node *nd;
-	struct perf_probe_event pev;
-	char *path = NULL;
-	int ret;
+	char *pathname;
+	int ret, cnt = 0;
 
 	ret = build_id_cache__list_all(&bidlist, true);
 	if (ret < 0) {
@@ -1134,34 +1133,33 @@ static int activate_sdt_events(char *sys, char *event)
 		return ret;
 	}
 
+	probe_conf.force_add = true;
 	/* Get the path of the binary in which the SDT event is */
 	strlist__for_each(nd, bidlist) {
 		cache = probe_cache__new(nd->s);
 		if (!cache)
 			continue;
-		entry = probe_cache__find_by_name(cache, sys, event);
-		probe_cache__delete(cache);
-		if (entry) {
-			path = build_id_cache__origname(nd->s);
-			break;
+		pathname = build_id_cache__origname(nd->s);
+		for_each_probe_cache_entry(entry, cache) {
+			/* Skip the cache entry which has no name */
+			if (!entry->pev.event || !entry->pev.group)
+				continue;
+			if (strglobmatch(entry->pev.group, sys) &&
+			    strglobmatch(entry->pev.event, event)) {
+				ret = probe_cache_entry__activate(entry,
+								  pathname);
+				if (ret >= 0)
+					cnt++;
+			}
 		}
+		free(pathname);
+		probe_cache__delete(cache);
 	}
 	/* Silently fail, because this is just an option */
-	if (!path)
+	if (cnt == 0)
 		return -ENOENT;
 
-	/* Add perf probe event for given SDT */
-	memset(&pev, 0, sizeof(pev));
-	pev.point.function = event;
-	pev.event = event;
-	pev.group = sys;
-	pev.sdt = true;
-	pev.uprobes = true;
-	pev.target = path;
-	ret = add_perf_probe_events(&pev, 1);
-	free(path);
-
-	return ret;
+	return 0;
 }
 
 static int __parse_events_add_tracepoint(struct list_head *list, int *idx,
@@ -1195,7 +1193,7 @@ int parse_events_add_tracepoint(struct list_head *list, int *idx,
 	ret = __parse_events_add_tracepoint(list, idx, sys, event,
 					    err, head_config);
 	/* Retry if SDT could be activated */
-	if (ret < 0 && activate_sdt_events(sys, event) > 0)
+	if (ret < 0 && activate_sdt_events(sys, event) == 0)
 		ret = __parse_events_add_tracepoint(list, idx, sys, event,
 						    err, head_config);
 

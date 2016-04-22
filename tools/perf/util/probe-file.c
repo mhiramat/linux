@@ -385,6 +385,26 @@ int probe_cache_entry__get_event(struct probe_cache_entry *entry,
 	return i;
 }
 
+int probe_cache_entry__activate(struct probe_cache_entry *entry,
+				const char *target)
+{
+	int ret;
+
+	if (!entry->pev.tevs) {
+		entry->pev.uprobes = (target[0] != '[');
+		entry->pev.target = strdup(target);
+		entry->pev.sdt = true;
+		ret = probe_cache_entry__get_event(entry, &entry->pev.tevs);
+		if (ret < 0)
+			return ret;
+		entry->pev.ntevs = ret;
+	}
+	ret = apply_perf_probe_events(&entry->pev, 1);
+	clear_probe_trace_events(entry->pev.tevs, entry->pev.ntevs);
+	zfree(&entry->pev.tevs);
+	return ret;
+}
+
 /* For the kernel probe caches, pass target = NULL or DSO__NAME_KALLSYMS */
 static int probe_cache__open(struct probe_cache *pcache, const char *target)
 {
