@@ -238,7 +238,7 @@ static void clear_perf_probe_point(struct perf_probe_point *pp)
 	free(pp->lazy_line);
 }
 
-static void clear_probe_trace_events(struct probe_trace_event *tevs, int ntevs)
+void clear_probe_trace_events(struct probe_trace_event *tevs, int ntevs)
 {
 	int i;
 
