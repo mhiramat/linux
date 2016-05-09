@@ -1655,14 +1655,6 @@ static char *dso__find_kallsyms(struct dso *dso, struct map *map)
 
 	/* Use /proc/kallsyms if possible */
 	if (is_host) {
-		DIR *d;
-
-		/* If no cached kcore go with /proc/kallsyms */
-		d = opendir(path);
-		if (!d)
-			goto proc_kallsyms;
-		closedir(d);
-
 		/*
 		 * Do not check the build-id cache, until we know we cannot use
 		 * /proc/kcore.
