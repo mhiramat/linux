@@ -150,8 +150,8 @@ char *build_id_cache__kallsyms_path(const char *sbuild_id, char *bf,
 	bool is_alloc = !!bf;
 	bool retry_old = true;
 
-	asnprintf(&bf, size, "%s/[kernel.kallsyms]/%s/kallsyms",
-		  buildid_dir, sbuild_id);
+	asnprintf(&bf, size, "%s/%s/%s/kallsyms",
+		  buildid_dir, DSO__NAME_KALLSYMS, sbuild_id);
 retry:
 	if (!access(bf, F_OK))
 		return bf;
@@ -159,8 +159,8 @@ retry:
 		free(bf);
 	if (retry_old) {
 		/* Try old style kallsyms cache */
-		asnprintf(&bf, size, "%s/[kernel.kallsyms]/%s",
-			  buildid_dir, sbuild_id);
+		asnprintf(&bf, size, "%s/%s/%s",
+			  buildid_dir, DSO__NAME_KALLSYMS, sbuild_id);
 		retry_old = false;
 		goto retry;
 	}
