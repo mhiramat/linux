@@ -1656,7 +1656,6 @@ static char *dso__find_kallsyms(struct dso *dso, struct map *map)
 	/* Use /proc/kallsyms if possible */
 	if (is_host) {
 		DIR *d;
-		int fd;
 
 		/* If no cached kcore go with /proc/kallsyms */
 		d = opendir(path);
@@ -1668,9 +1667,7 @@ static char *dso__find_kallsyms(struct dso *dso, struct map *map)
 		 * Do not check the build-id cache, until we know we cannot use
 		 * /proc/kcore.
 		 */
-		fd = open("/proc/kcore", O_RDONLY);
-		if (fd != -1) {
-			close(fd);
+		if (!access("/proc/kcore", R_OK)) {
 			/* If module maps match go with /proc/kallsyms */
 			if (!validate_kcore_addresses("/proc/kallsyms", map))
 				goto proc_kallsyms;
