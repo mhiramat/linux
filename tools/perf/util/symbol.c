@@ -1648,34 +1648,33 @@ static char *dso__find_kallsyms(struct dso *dso, struct map *map)
 				 sizeof(host_build_id)) == 0)
 		is_host = dso__build_id_equal(dso, host_build_id);
 
+	/* Try a fast path for /proc/kallsyms if possible */
+	if (is_host) {
+		/*
+		 * Do not check the build-id cache, unless we know we cannot use
+		 * /proc/kcore or module maps don't match to /proc/kallsyms.
+		 */
+		if (!access("/proc/kcore", R_OK) &&
+		    !validate_kcore_addresses("/proc/kallsyms", map))
+			goto proc_kallsyms;
+	}
+
 	build_id__sprintf(dso->build_id, sizeof(dso->build_id), sbuild_id);
 
+	/* Find kallsyms in build-id cache with kcore */
 	scnprintf(path, sizeof(path), "%s/[kernel.kcore]/%s", buildid_dir,
 		  sbuild_id);
 
-	/* Use /proc/kallsyms if possible */
-	if (is_host) {
-		/*
-		 * Do not check the build-id cache, until we know we cannot use
-		 * /proc/kcore.
-		 */
-		if (!access("/proc/kcore", R_OK)) {
-			/* If module maps match go with /proc/kallsyms */
-			if (!validate_kcore_addresses("/proc/kallsyms", map))
-				goto proc_kallsyms;
-		}
-
-		/* Find kallsyms in build-id cache with kcore */
-		if (!find_matching_kcore(map, path, sizeof(path)))
-			return strdup(path);
-
-		goto proc_kallsyms;
-	}
-
-	/* Find kallsyms in build-id cache with kcore */
 	if (!find_matching_kcore(map, path, sizeof(path)))
 		return strdup(path);
 
+	/* Use current /proc/kallsyms if possible */
+	if (is_host) {
+proc_kallsyms:
+		return strdup("/proc/kallsyms");
+	}
+
+	/* Finally, find a cache of kallsyms */
 	scnprintf(path, sizeof(path), "%s/[kernel.kallsyms]/%s",
 		  buildid_dir, sbuild_id);
 
@@ -1686,9 +1685,6 @@ static char *dso__find_kallsyms(struct dso *dso, struct map *map)
 	}
 
 	return strdup(path);
-
-proc_kallsyms:
-	return strdup("/proc/kallsyms");
 }
 
 static int dso__load_kernel_sym(struct dso *dso, struct map *map,
