@@ -1675,19 +1675,10 @@ proc_kallsyms:
 	}
 
 	/* Finally, find a cache of kallsyms */
-	scnprintf(path, sizeof(path), "%s/[kernel.kallsyms]/%s/kallsyms",
-		  buildid_dir, sbuild_id);
-
-	/* Try old style kallsyms cache */
-	if (access(path, F_OK)) {
-		scnprintf(path, sizeof(path), "%s/[kernel.kallsyms]/%s",
-			  buildid_dir, sbuild_id);
-
-		if (access(path, F_OK)) {
-			pr_err("No kallsyms or vmlinux with build-id %s was found\n",
-			       sbuild_id);
-			return NULL;
-		}
+	if (!build_id_cache__kallsyms_path(sbuild_id, path, sizeof(path))) {
+		pr_err("No kallsyms or vmlinux with build-id %s was found\n",
+		       sbuild_id);
+		return NULL;
 	}
 
 	return strdup(path);

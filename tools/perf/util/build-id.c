@@ -144,6 +144,30 @@ static int asnprintf(char **strp, size_t size, const char *fmt, ...)
 	return ret;
 }
 
+char *build_id_cache__kallsyms_path(const char *sbuild_id, char *bf,
+				    size_t size)
+{
+	bool is_alloc = !!bf;
+	bool retry_old = true;
+
+	asnprintf(&bf, size, "%s/[kernel.kallsyms]/%s/kallsyms",
+		  buildid_dir, sbuild_id);
+retry:
+	if (!access(bf, F_OK))
+		return bf;
+	if (is_alloc)
+		free(bf);
+	if (retry_old) {
+		/* Try old style kallsyms cache */
+		asnprintf(&bf, size, "%s/[kernel.kallsyms]/%s",
+			  buildid_dir, sbuild_id);
+		retry_old = false;
+		goto retry;
+	}
+
+	return NULL;
+}
+
 static char *build_id_cache__linkname(const char *sbuild_id, char *bf,
 				      size_t size)
 {
