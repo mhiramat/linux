@@ -2364,6 +2364,9 @@ int show_perf_probe_events(struct strfilter *filter)
 
 	setup_pager();
 
+	if (probe_conf.cache)
+		return probe_cache__show_all_caches(filter);
+
 	ret = init_probe_symbol_maps(false);
 	if (ret < 0)
 		return ret;
