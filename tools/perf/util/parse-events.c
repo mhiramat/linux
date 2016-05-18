@@ -1994,7 +1994,7 @@ void print_sdt_events(const char *subsys_glob, const char *event_glob,
 		pr_debug("Failed to allocate new strlist for SDT\n");
 		return;
 	}
-	ret = build_id_cache__list_all(&bidlist);
+	ret = build_id_cache__list_all(&bidlist, true);
 	if (ret < 0) {
 		pr_debug("Failed to get buildids: %d\n", ret);
 		return;
