@@ -53,6 +53,10 @@ struct probe_cache_entry *probe_cache__find(struct probe_cache *pcache,
 struct probe_cache_entry *probe_cache__find_by_name(struct probe_cache *pcache,
 					const char *group, const char *event);
 int probe_cache__show_all_caches(struct strfilter *filter);
+int probe_cache_entry__get_event(struct probe_cache_entry *entry,
+				 struct probe_trace_event **tevs);
+int probe_cache_entry__activate(struct probe_cache_entry *entry,
+				const char *target);
 #else	/* ! HAVE_LIBELF_SUPPORT */
 static inline struct probe_cache *probe_cache__new(const char *tgt __maybe_unused)
 {
