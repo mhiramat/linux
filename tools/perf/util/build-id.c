@@ -504,6 +504,46 @@ out:
 	return ret;
 }
 
+static bool str_is_build_id(const char *maybe_sbuild_id, size_t len)
+{
+	size_t i;
+
+	for (i = 0; i < len; i++) {
+		if (!isxdigit(maybe_sbuild_id[i]))
+			return false;
+	}
+	return true;
+}
+
+/* Return the valid complete build-id */
+char *build_id_cache__complement(const char *incomplete_sbuild_id)
+{
+	struct strlist *list;
+	struct str_node *nd, *cand = NULL;
+	char *sbuild_id = NULL;
+	size_t len = strlen(incomplete_sbuild_id);
+
+	if (len >= SBUILD_ID_SIZE ||
+	    !str_is_build_id(incomplete_sbuild_id, len) ||
+	    build_id_cache__list_all(&list, true) < 0)
+		return NULL;
+
+	strlist__for_each(nd, list) {
+		if (strncmp(nd->s, incomplete_sbuild_id, len) != 0)
+			continue;
+		if (cand) {	/* Error: There are more than 2 candidates. */
+			cand = NULL;
+			break;
+		}
+		cand = nd;
+	}
+	if (cand)
+		sbuild_id = strdup(cand->s);
+	strlist__delete(list);
+
+	return sbuild_id;
+}
+
 char *build_id_cache__cachedir(const char *sbuild_id, const char *name,
 			       bool is_kallsyms, bool is_vdso)
 {
