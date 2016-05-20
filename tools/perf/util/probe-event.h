@@ -134,6 +134,7 @@ bool perf_probe_event_need_dwarf(struct perf_probe_event *pev);
 /* Release event contents */
 void clear_perf_probe_event(struct perf_probe_event *pev);
 void clear_probe_trace_event(struct probe_trace_event *tev);
+void clear_probe_trace_events(struct probe_trace_event *tevs, int ntevs);
 
 /* Command string to line-range */
 int parse_line_range_desc(const char *cmd, struct line_range *lr);

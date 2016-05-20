@@ -21,6 +21,8 @@ struct probe_cache {
 
 #define PF_FL_UPROBE	1
 #define PF_FL_RW	2
+#define for_each_probe_cache_entry(entry, pcache) \
+	list_for_each_entry(entry, &pcache->list, list)
 
 /* probe-file.c depends on libelf */
 #ifdef HAVE_LIBELF_SUPPORT
@@ -33,6 +35,9 @@ int probe_file__del_events(int fd, struct strfilter *filter);
 int probe_file__get_events(int fd, struct strfilter *filter,
 				  struct strlist *plist);
 int probe_file__del_strlist(int fd, struct strlist *namelist);
+
+int probe_cache_entry__get_event(struct probe_cache_entry *entry,
+				 struct probe_trace_event **tevs);
 
 struct probe_cache *probe_cache__new(const char *target);
 int probe_cache__add_entry(struct probe_cache *pcache,
