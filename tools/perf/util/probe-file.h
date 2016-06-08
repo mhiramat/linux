@@ -22,6 +22,8 @@ struct probe_cache {
 #define PF_FL_UPROBE	1
 #define PF_FL_RW	2
 
+/* probe-file.c depends on libelf */
+#ifdef HAVE_LIBELF_SUPPORT
 int probe_file__open(int flag);
 int probe_file__open_both(int *kfd, int *ufd, int flag);
 struct strlist *probe_file__get_namelist(int fd);
@@ -46,4 +48,11 @@ struct probe_cache_entry *probe_cache__find(struct probe_cache *pcache,
 struct probe_cache_entry *probe_cache__find_by_name(struct probe_cache *pcache,
 					const char *group, const char *event);
 int probe_cache__show_all_caches(struct strfilter *filter);
+#else	/* ! HAVE_LIBELF_SUPPORT */
+static inline struct probe_cache *probe_cache__new(const char *tgt __maybe_unused)
+{
+	return NULL;
+}
+#define probe_cache__delete(pcache) do {} while(0)
+#endif
 #endif
