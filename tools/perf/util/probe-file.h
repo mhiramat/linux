@@ -21,6 +21,8 @@ struct probe_cache {
 
 #define PF_FL_UPROBE	1
 #define PF_FL_RW	2
+#define for_each_probe_cache_entry(entry, pcache) \
+	list_for_each_entry(entry, &pcache->list, list)
 
 /* probe-file.c depends on libelf */
 #ifdef HAVE_LIBELF_SUPPORT
