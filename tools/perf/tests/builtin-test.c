@@ -212,6 +212,10 @@ static struct test generic_tests[] = {
 		.func = test__backward_ring_buffer,
 	},
 	{
+		.desc = "Test SDT event probing",
+		.func = test__sdt_event,
+	},
+	{
 		.func = NULL,
 	},
 };
