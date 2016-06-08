@@ -370,7 +370,7 @@ static int del_perf_probe_caches(struct strfilter *filter)
 	struct str_node *nd;
 	int ret;
 
-	ret = build_id_cache__list_all(&bidlist);
+	ret = build_id_cache__list_all(&bidlist, false);
 	if (ret < 0) {
 		pr_debug("Failed to get buildids: %d\n", ret);
 		return ret;
