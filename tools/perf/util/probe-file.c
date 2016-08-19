@@ -73,16 +73,25 @@ static void print_both_open_warning(int kerr, int uerr)
 static int open_probe_events(const char *trace_file, bool readwrite)
 {
 	char buf[PATH_MAX];
+	const char *tracing_dir = tracing_path;
+	int oflag = 0;
+	mode_t mode = 0;
 	int ret;
 
+	if (probe_conf.output_dir) {
+		tracing_dir = probe_conf.output_dir;
+		oflag = O_CREAT;
+		mode = 0644;
+	}
+
 	ret = e_snprintf(buf, PATH_MAX, "%s/%s",
-			 tracing_path, trace_file);
+			 tracing_dir, trace_file);
 	if (ret >= 0) {
 		pr_debug("Opening %s write=%d\n", buf, readwrite);
 		if (readwrite && !probe_event_dry_run)
-			ret = open(buf, O_RDWR | O_APPEND, 0);
+			ret = open(buf, O_RDWR | O_APPEND | oflag, mode);
 		else
-			ret = open(buf, O_RDONLY, 0);
+			ret = open(buf, O_RDONLY | oflag, mode);
 
 		if (ret < 0)
 			ret = -errno;
@@ -225,6 +234,8 @@ int probe_file__add_event(int fd, struct probe_trace_event *tev)
 			pr_warning("Failed to write event: %s\n",
 				   str_error_r(errno, sbuf, sizeof(sbuf)));
 		}
+		if (probe_conf.output_dir)
+			ret = write(fd, "\n", 1) == 1 ? 0 : -errno;
 	}
 	free(buf);
 
@@ -257,6 +268,8 @@ static int __del_trace_probe_event(int fd, struct str_node *ent)
 		ret = -errno;
 		goto error;
 	}
+	if (probe_conf.output_dir)
+		ret = write(fd, "\n", 1) == 1 ? 0 : -errno;
 
 	return 0;
 error:

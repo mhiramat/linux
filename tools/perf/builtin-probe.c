@@ -517,6 +517,8 @@ __cmd_probe(int argc, const char **argv, const char *prefix __maybe_unused)
 		"Show variables location range in scope (with --vars only)"),
 	OPT_STRING('k', "vmlinux", &symbol_conf.vmlinux_name,
 		   "file", "vmlinux pathname"),
+	OPT_STRING(0, "outdir", &probe_conf.output_dir,
+		"directory", "path to offline output directory"),
 	OPT_STRING('s', "source", &symbol_conf.source_prefix,
 		   "directory", "path to kernel source"),
 	OPT_BOOLEAN('\0', "no-inlines", &probe_conf.no_inlines,

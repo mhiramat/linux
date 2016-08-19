@@ -14,6 +14,7 @@ struct probe_conf {
 	bool	no_inlines;
 	bool	cache;
 	int	max_probes;
+	const char	*output_dir;
 };
 extern struct probe_conf probe_conf;
 extern bool probe_event_dry_run;
