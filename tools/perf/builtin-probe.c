@@ -600,6 +600,7 @@ __cmd_probe(int argc, const char **argv, const char *prefix __maybe_unused)
 	/*
 	 * Only consider the user's kernel image path if given.
 	 */
+	symbol_conf.ignore_vmlinux_buildid = \
 	symbol_conf.try_vmlinux_path = (symbol_conf.vmlinux_name == NULL);
 
 	switch (params.command) {
