@@ -5,6 +5,9 @@
 const char *get_arch_regstr(unsigned int n);
 #endif
 
+#if defined(__x86_64__) || defined (__i386__)
+const char *arm_get_arch_regstr(unsigned int n);
+#endif
 #ifdef HAVE_ARCH_REGS_QUERY_REGISTER_OFFSET
 /*
  * Arch should support fetching the offset of a register in pt_regs

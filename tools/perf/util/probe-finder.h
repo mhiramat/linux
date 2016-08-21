@@ -71,6 +71,7 @@ struct probe_finder {
 	Dwarf_Die		cu_die;		/* Current CU */
 	Dwarf_Die		sp_die;
 	struct intlist		*lcache;	/* Line cache for lazy match */
+	unsigned short		e_machine;	/* ELF machine */
 
 	/* For variable searching */
 #if _ELFUTILS_PREREQ(0, 142)

@@ -127,3 +127,6 @@ int regs_query_register_offset(const char *name)
 			return roff->offset;
 	return -EINVAL;
 }
+
+#define get_arch_regstr arm_get_arch_regstr
+#include "../../arch/arm/util/dwarf-regs.c"
