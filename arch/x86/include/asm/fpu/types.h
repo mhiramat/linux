@@ -68,6 +68,9 @@ struct fxregs_state {
 /* Default value for fxregs_state.mxcsr: */
 #define MXCSR_DEFAULT		0x1f80
 
+/* Copy both mxcsr & mxcsr_flags with a single u64 memcpy: */
+#define MXCSR_AND_FLAGS_SIZE sizeof(u64)
+
 /*
  * Software based FPU emulation state. This is arbitrary really,
  * it matches the x87 format to make it easier to understand:
@@ -276,20 +279,6 @@ union fpregs_state {
  */
 struct fpu {
 	/*
-	 * @last_cpu:
-	 *
-	 * Records the last CPU on which this context was loaded into
-	 * FPU registers. (In the lazy-restore case we might be
-	 * able to reuse FPU registers across multiple context switches
-	 * this way, if no intermediate task used the FPU.)
-	 *
-	 * A value of -1 is used to indicate that the FPU state in context
-	 * memory is newer than the FPU state in registers, and that the
-	 * FPU state should be reloaded next time the task is run.
-	 */
-	unsigned int			last_cpu;
-
-	/*
 	 * @fpstate_active:
 	 *
 	 * This flag indicates whether this context is active: if the task
@@ -299,27 +288,22 @@ struct fpu {
 	unsigned char			fpstate_active;
 
 	/*
-	 * @fpregs_active:
+	 * @fpregs_owner:
 	 *
-	 * This flag determines whether a given context is actively
-	 * loaded into the FPU's registers and that those registers
-	 * represent the task's current FPU state.
+	 * This flag tells us whether this context is loaded into a CPU
+	 * right now.
 	 *
-	 * Note the interaction with fpstate_active:
+	 * This is set to 0 if a task is migrated to another CPU.
 	 *
-	 *   # task does not use the FPU:
-	 *   fpstate_active == 0
-	 *
-	 *   # task uses the FPU and regs are active:
-	 *   fpstate_active == 1 && fpregs_active == 1
-	 *
-	 *   # the regs are inactive but still match fpstate:
-	 *   fpstate_active == 1 && fpregs_active == 0 && fpregs_owner == fpu
-	 *
-	 * The third state is what we use for the lazy restore optimization
-	 * on lazy-switching CPUs.
+	 * NOTE: the fpregs_owner_ctx percpu pointer also has to point to
+	 *       this FPU context for the register cache to be valid. If any
+	 *       of these two flags is cleared then the cache is invalid.
+	 *       Some internals can access the context-flag more easily,
+	 *       others have easier access to the percpu variable. The
+	 *       FPU context-switching code has access to both so there's
+	 *       very little cost of having the cache indexed in two ways:
 	 */
-	unsigned char			fpregs_active;
+	unsigned char			fpregs_owner;
 
 	/*
 	 * @state:

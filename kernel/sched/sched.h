@@ -2002,3 +2002,11 @@ static inline void cpufreq_update_this_cpu(struct rq *rq, unsigned int flags) {}
 #else /* arch_scale_freq_capacity */
 #define arch_scale_freq_invariant()	(false)
 #endif
+
+/*
+ * Default task-migration arch callback:
+ */
+#ifndef arch_task_migrate
+static inline void arch_task_migrate(struct task_struct *p) { }
+#endif
+

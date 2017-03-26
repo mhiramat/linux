@@ -486,11 +486,11 @@ extern int copy_fpstate_to_sigframe(void __user *buf, void __user *fp, int size)
  * FPU context switch related helper methods:
  */
 
-DECLARE_PER_CPU(struct fpu *, fpu_fpregs_owner_ctx);
+DECLARE_PER_CPU(struct fpu *, fpregs_owner_ctx);
 
 /*
  * The in-register FPU state for an FPU context on a CPU is assumed to be
- * valid if the fpu->last_cpu matches the CPU, and the fpu_fpregs_owner_ctx
+ * valid if fpu->fpregs_owner is still set, and if the fpregs_owner_ctx
  * matches the FPU.
  *
  * If the FPU register state is valid, the kernel can skip restoring the
@@ -507,17 +507,17 @@ DECLARE_PER_CPU(struct fpu *, fpu_fpregs_owner_ctx);
  */
 static inline void __cpu_invalidate_fpregs_state(void)
 {
-	__this_cpu_write(fpu_fpregs_owner_ctx, NULL);
+	__this_cpu_write(fpregs_owner_ctx, NULL);
 }
 
 static inline void __fpu_invalidate_fpregs_state(struct fpu *fpu)
 {
-	fpu->last_cpu = -1;
+	fpu->fpregs_owner = 0;
 }
 
 static inline int fpregs_state_valid(struct fpu *fpu, unsigned int cpu)
 {
-	return fpu == this_cpu_read_stable(fpu_fpregs_owner_ctx) && cpu == fpu->last_cpu;
+	return fpu == this_cpu_read_stable(fpregs_owner_ctx) && fpu->fpregs_owner;
 }
 
 /*
@@ -526,35 +526,14 @@ static inline int fpregs_state_valid(struct fpu *fpu, unsigned int cpu)
  */
 static inline void fpregs_deactivate(struct fpu *fpu)
 {
-	WARN_ON_FPU(!fpu->fpregs_active);
-
-	fpu->fpregs_active = 0;
-	this_cpu_write(fpu_fpregs_owner_ctx, NULL);
+	this_cpu_write(fpregs_owner_ctx, NULL);
 	trace_x86_fpu_regs_deactivated(fpu);
 }
 
 static inline void fpregs_activate(struct fpu *fpu)
 {
-	WARN_ON_FPU(fpu->fpregs_active);
-
-	fpu->fpregs_active = 1;
-	this_cpu_write(fpu_fpregs_owner_ctx, fpu);
+	this_cpu_write(fpregs_owner_ctx, fpu);
 	trace_x86_fpu_regs_activated(fpu);
-}
-
-/*
- * The question "does this thread have fpu access?"
- * is slightly racy, since preemption could come in
- * and revoke it immediately after the test.
- *
- * However, even in that very unlikely scenario,
- * we can just assume we have FPU access - typically
- * to save the FP state - we'll just take a #NM
- * fault and get the FPU access back.
- */
-static inline int fpregs_active(void)
-{
-	return current->thread.fpu.fpregs_active;
 }
 
 /*
@@ -571,17 +550,17 @@ static inline int fpregs_active(void)
 static inline void
 switch_fpu_prepare(struct fpu *old_fpu, int cpu)
 {
-	if (old_fpu->fpregs_active) {
+	if (old_fpu->fpstate_active) {
 		if (!copy_fpregs_to_fpstate(old_fpu))
-			old_fpu->last_cpu = -1;
+			old_fpu->fpregs_owner = 0;
 		else
-			old_fpu->last_cpu = cpu;
+			old_fpu->fpregs_owner = 1;
 
-		/* But leave fpu_fpregs_owner_ctx! */
-		old_fpu->fpregs_active = 0;
+		/* But leave fpregs_owner_ctx! */
 		trace_x86_fpu_regs_deactivated(old_fpu);
-	} else
-		old_fpu->last_cpu = -1;
+	} else {
+		old_fpu->fpregs_owner = 0;
+	}
 }
 
 /*
@@ -617,8 +596,7 @@ static inline void user_fpu_begin(void)
 	struct fpu *fpu = &current->thread.fpu;
 
 	preempt_disable();
-	if (!fpregs_active())
-		fpregs_activate(fpu);
+	fpregs_activate(fpu);
 	preempt_enable();
 }
 
