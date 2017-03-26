@@ -921,12 +921,12 @@ void __i915_add_request(struct drm_i915_gem_request *request, bool flush_caches)
 	local_bh_enable(); /* Kick the execlists tasklet if just scheduled */
 }
 
-static void reset_wait_queue(wait_queue_head_t *q, wait_queue_t *wait)
+static void reset_wait_queue(wait_queue_head_t *q, wait_queue_entry_t *wait)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&q->lock, flags);
-	if (list_empty(&wait->task_list))
+	if (list_empty(&wait->entry))
 		__add_wait_queue(q, wait);
 	spin_unlock_irqrestore(&q->lock, flags);
 }

@@ -129,8 +129,8 @@ struct drm_i915_gem_request {
 	 */
 	struct i915_sw_fence submit;
 	struct i915_sw_fence execute;
-	wait_queue_t submitq;
-	wait_queue_t execq;
+	wait_queue_entry_t submitq;
+	wait_queue_entry_t execq;
 
 	/* A list of everyone we wait upon, and everyone who waits upon us.
 	 * Even though we will not be submitted to the hardware before the

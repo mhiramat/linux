@@ -2,7 +2,8 @@
 #define _LINUX_FS_H
 
 #include <linux/linkage.h>
-#include <linux/wait.h>
+#include <linux/wait_bit.h>
+#include <linux/cred.h>
 #include <linux/kdev_t.h>
 #include <linux/dcache.h>
 #include <linux/path.h>
