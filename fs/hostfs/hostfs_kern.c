@@ -16,6 +16,7 @@
 #include <linux/seq_file.h>
 #include <linux/mount.h>
 #include <linux/namei.h>
+#include <linux/uio.h>
 #include "hostfs.h"
 #include <init.h>
 #include <kern.h>
@@ -385,10 +386,47 @@ static int hostfs_fsync(struct file *file, loff_t start, loff_t end,
 	return ret;
 }
 
+/* Non-cache read file: caching pages will be done in host side */
+static ssize_t
+hostfs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
+{
+	struct file *file = iocb->ki_filp;
+	loff_t start = iocb->ki_pos;
+	char *buffer;
+	int ret;
+	size_t count, total = 0;
+
+	buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!buffer)
+		return -ENOMEM;
+
+	while ((count = iov_iter_count(iter)) > 0) {
+		if (count > PAGE_SIZE)
+			count = PAGE_SIZE;
+
+		ret = read_file(FILE_HOSTFS_I(file)->fd, &start, buffer, count);
+		if (ret <= 0)
+			break;
+
+		count = copy_to_iter(buffer, ret, iter);
+		total += count;
+		if (count != ret) {
+			ret = -EFAULT;
+			break;
+		}
+	}
+
+	kfree(buffer);
+	if (total)
+		iocb->ki_pos += total;
+
+	return total ? total : ret;
+}
+
 static const struct file_operations hostfs_file_fops = {
 	.llseek		= generic_file_llseek,
 	.splice_read	= generic_file_splice_read,
-	.read_iter	= generic_file_read_iter,
+	.read_iter	= hostfs_file_read_iter,
 	.write_iter	= generic_file_write_iter,
 	.mmap		= generic_file_mmap,
 	.open		= hostfs_open,
