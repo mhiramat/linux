@@ -803,6 +803,43 @@ static int hostfs_permission(struct inode *ino, int desired)
 	return err;
 }
 
+static int hostfs_getattr(const struct path *path, struct kstat *stat,
+			  u32 request_mask, unsigned int query_flags)
+{
+	struct inode *inode = d_inode(path->dentry);
+	struct hostfs_stat st;
+	int err, fd = HOSTFS_I(inode)->fd;
+
+	if (fd >= 0) {
+		err = stat_file(NULL, &st, fd);
+		if (!err) {
+			/* Update inode stat */
+			inode->i_mode = st.mode;
+			set_nlink(inode, st.nlink);
+			i_uid_write(inode, st.uid);
+			i_gid_write(inode, st.gid);
+			inode->i_atime = st.atime;
+			inode->i_mtime = st.mtime;
+			inode->i_ctime = st.ctime;
+			inode->i_size = st.size;
+			inode->i_blocks = st.blocks;
+		}
+	} else {
+		char *name = inode_name(inode);
+
+		if (name == NULL)
+			return -ENOMEM;
+
+		err = read_name(inode, name);
+		__putname(name);
+	}
+
+	if (!err)
+		err = simple_getattr(path, stat, request_mask, query_flags);
+
+	return err;
+}
+
 static int hostfs_setattr(struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = d_inode(dentry);
@@ -873,6 +910,7 @@ static int hostfs_setattr(struct dentry *dentry, struct iattr *attr)
 
 static const struct inode_operations hostfs_iops = {
 	.permission	= hostfs_permission,
+	.getattr	= hostfs_getattr,
 	.setattr	= hostfs_setattr,
 };
 
