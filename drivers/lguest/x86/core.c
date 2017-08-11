@@ -289,7 +289,7 @@ void lguest_arch_run_guest(struct lg_cpu *cpu)
 	 * a different CPU. So all the critical stuff should be done
 	 * before this.
 	 */
-	else if (cpu->regs->trapnum == 7 && !fpregs_active())
+	else if (cpu->regs->trapnum == 7 && !current->thread.fpu.fpstate_active)
 		fpu__restore(&current->thread.fpu);
 }
 
