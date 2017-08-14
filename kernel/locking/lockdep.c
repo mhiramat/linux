@@ -4623,6 +4623,10 @@ asmlinkage __visible void lockdep_sys_exit(void)
 	/*
 	 * The lock history for each syscall should be independent. So wipe the
 	 * slate clean on return to userspace.
+	 *
+	 * crossrelease_hist_end() works well here even when getting here
+	 * without starting (i.e. just after forking), because it rolls back
+	 * the index to point to the last entry, which is already invalid.
 	 */
 	crossrelease_hist_end(XHLOCK_PROC);
 	crossrelease_hist_start(XHLOCK_PROC);
@@ -4849,7 +4853,7 @@ static void add_xhlock(struct held_lock *hlock)
 
 	/* Initialize hist_lock's members */
 	xhlock->hlock = *hlock;
-	xhlock->hist_id = current->hist_id++;
+	xhlock->hist_id = ++current->hist_id;
 
 	xhlock->trace.nr_entries = 0;
 	xhlock->trace.max_entries = MAX_XHLOCK_TRACE_ENTRIES;
@@ -5025,12 +5029,12 @@ static void commit_xhlocks(struct cross_lock *xlock)
 				break;
 
 			/*
-			 * Filter out the cases that the ring buffer was
-			 * overwritten and the previous entry has a bigger
-			 * hist_id than the following one, which is impossible
-			 * otherwise.
+			 * Filter out the cases where the ring buffer was
+			 * overwritten and the current entry has a bigger
+			 * hist_id than the previous one, which is impossible
+			 * otherwise:
 			 */
-			if (unlikely(before(xhlock->hist_id, prev_hist_id)))
+			if (unlikely(before(prev_hist_id, xhlock->hist_id)))
 				break;
 
 			prev_hist_id = xhlock->hist_id;
