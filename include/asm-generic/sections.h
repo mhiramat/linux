@@ -135,4 +135,28 @@ static inline bool init_section_intersects(void *virt, size_t size)
 	return memory_intersects(__init_begin, __init_end, virt, size);
 }
 
+/**
+ * in_init_text - check if an address is in between _sinittext and _einittext.
+ * @addr: virtual address to be checked
+ *
+ * Returns: true if the address specified by @addr is in between _sinittext
+ * and _einittext, false otherwise.
+ */
+static inline bool in_init_text(unsigned long addr)
+{
+	return memory_contains(_sinittext, _einittext, (void *)addr, 0);
+}
+
+/**
+ * in_core_text - check if an address is in between _stext and _etext.
+ * @addr: virtual address to be checked
+ *
+ * Returns: true if the address specified by @addr is in between _stext
+ * and _etext, false otherwise.
+ */
+static inline bool in_core_text(unsigned long addr)
+{
+	return memory_contains(_stext, _etext, (void *)addr, 0);
+}
+
 #endif /* _ASM_GENERIC_SECTIONS_H_ */

@@ -51,17 +51,9 @@ extern const u16 kallsyms_token_index[] __weak;
 
 extern const unsigned long kallsyms_markers[] __weak;
 
-static inline int is_kernel_inittext(unsigned long addr)
-{
-	if (addr >= (unsigned long)_sinittext
-	    && addr <= (unsigned long)_einittext)
-		return 1;
-	return 0;
-}
-
 static inline int is_kernel_text(unsigned long addr)
 {
-	if ((addr >= (unsigned long)_stext && addr <= (unsigned long)_etext) ||
+	if (in_core_text(addr) ||
 	    arch_is_kernel_text(addr))
 		return 1;
 	return in_gate_area_no_mm(addr);
@@ -79,7 +71,7 @@ static int is_ksym_addr(unsigned long addr)
 	if (IS_ENABLED(CONFIG_KALLSYMS_ALL))
 		return is_kernel(addr);
 
-	return is_kernel_text(addr) || is_kernel_inittext(addr);
+	return is_kernel_text(addr) || in_init_text(addr);
 }
 
 /*
@@ -272,7 +264,7 @@ static unsigned long get_symbol_pos(unsigned long addr,
 
 	/* If we found no next symbol, we use the end of the section. */
 	if (!symbol_end) {
-		if (is_kernel_inittext(addr))
+		if (in_init_text(addr))
 			symbol_end = (unsigned long)_einittext;
 		else if (IS_ENABLED(CONFIG_KALLSYMS_ALL))
 			symbol_end = (unsigned long)_end;
