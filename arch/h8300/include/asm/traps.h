@@ -11,6 +11,8 @@
 #ifndef _H8300_TRAPS_H
 #define _H8300_TRAPS_H
 
+#include <asm/sections.h>
+
 extern void _system_call(void);
 extern void _interrupt_entry(void);
 extern void _trace_break(void);
@@ -33,9 +35,6 @@ extern unsigned long *_interrupt_redirect_table;
 #define TRAP2_VEC 10
 #define TRAP3_VEC 11
 
-extern char _start[], _etext[];
-#define check_kernel_text(addr) \
-	((addr >= (unsigned long)(_start)) && \
-	 (addr <  (unsigned long)(_etext)) && !(addr & 1))
+#define check_kernel_text(addr) (in_core_text(addr) && !((addr) & 1))
 
 #endif /* _H8300_TRAPS_H */
