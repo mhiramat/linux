@@ -574,12 +574,20 @@ static void kprobe_optimizer(struct work_struct *work)
 
 	/*
 	 * Step 2: Wait for quiesence period to ensure all running interrupts
-	 * are done. Because optprobe may modify multiple instructions
-	 * there is a chance that Nth instruction is interrupted. In that
-	 * case, running interrupt can return to 2nd-Nth byte of jump
-	 * instruction. This wait is for avoiding it.
+	 * are done. Because optprobe may modify multiple instructions,
+	 * there is a chance that the Nth instruction is interrupted. In that
+	 * case, running interrupt can return to the Nth byte of jump
+	 * instruction. This can be avoided by waiting for returning of
+	 * such interrupts, since (until here) the first byte of the optimized
+	 * probe is already replaced with normal kprobe (sw breakpoint) and
+	 * all threads which reach to the probed address will hit it and
+	 * bypass the copied instructions (instead of executing the original.)
+	 * With CONFIG_PREEMPT, such interrupts can be preepmted. To wait
+	 * for such thread, we will use synchronize_rcu_tasks() which ensures
+	 * all preeempted tasks are scheduled normally (not preempted).
+	 * So we can ensure there is no threads preempted at probed address.
 	 */
-	synchronize_sched();
+	synchronize_rcu_tasks();
 
 	/* Step 3: Optimize kprobes after quiesence period */
 	do_optimize_kprobes();
