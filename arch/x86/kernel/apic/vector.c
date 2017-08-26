@@ -33,6 +33,7 @@ EXPORT_SYMBOL_GPL(x86_vector_domain);
 static DEFINE_RAW_SPINLOCK(vector_lock);
 static cpumask_var_t vector_cpumask, vector_searchmask, searched_cpumask;
 static struct irq_chip lapic_controller;
+static struct irq_matrix *vector_matrix;
 
 static bool irq_is_legacy(int irq)
 {
@@ -274,6 +275,7 @@ static void clear_irq_vector(int irq, struct apic_chip_data *data)
 	vector = data->cfg.vector;
 	for_each_cpu(cpu, data->domain)
 		per_cpu(vector_irq, cpu)[vector] = VECTOR_UNUSED;
+	irq_matrix_free(vector_matrix, data->domain, vector, 1);
 
 	data->cfg.vector = 0;
 	cpumask_clear(data->domain);
@@ -290,6 +292,7 @@ static void clear_irq_vector(int irq, struct apic_chip_data *data)
 	vector = data->cfg.old_vector;
 	for_each_cpu(cpu, data->old_domain)
 		per_cpu(vector_irq, cpu)[vector] = VECTOR_UNUSED;
+	irq_matrix_free(vector_matrix, data->old_domain, vector, 1);
 
 	data->move_in_progress = 0;
 	cpumask_clear(data->old_domain);
@@ -415,6 +418,36 @@ int __init arch_probe_nr_irqs(void)
 	return legacy_pic->probe();
 }
 
+void lapic_reserve_system_vectors(void)
+{
+	const struct cpumask *msk = cpumask_of(smp_processor_id());
+	int vec = 0;
+
+	for_each_set_bit_from(vec, reserved_vectors, NR_VECTORS)
+		irq_matrix_reserve(vector_matrix, msk, vec, 1);
+}
+
+static void lapic_reserve_legacy_vector(unsigned int irq)
+{
+	const struct cpumask *msk = cpumask_of(smp_processor_id());
+
+	/*
+	 * Use reserve here so it wont get accounted as allocated and
+	 * moveable in the cpu hotplug check.
+	 */
+	irq_matrix_reserve(vector_matrix, msk, ISA_IRQ_VECTOR(irq), 1);
+}
+
+void __init lapic_mark_legacy_vector(unsigned int irq)
+{
+	const struct cpumask *msk = cpumask_of(smp_processor_id());
+
+	if (irq != PIC_CASCADE_IR)
+		irq_matrix_mark(vector_matrix, msk, ISA_IRQ_VECTOR(irq), 1);
+	else
+		lapic_reserve_legacy_vector(irq);
+}
+
 int __init arch_early_irq_init(void)
 {
 	struct fwnode_handle *fn;
@@ -434,6 +467,14 @@ int __init arch_early_irq_init(void)
 	BUG_ON(!alloc_cpumask_var(&vector_searchmask, GFP_KERNEL));
 	BUG_ON(!alloc_cpumask_var(&searched_cpumask, GFP_KERNEL));
 
+	/*
+	 * Allocate the vector matrix allocator data structure and limit the
+	 * search area.
+	 */
+	vector_matrix = irq_alloc_matrix(NR_VECTORS, FIRST_EXTERNAL_VECTOR,
+					 FIRST_SYSTEM_VECTOR);
+	BUG_ON(!vector_matrix);
+
 	return arch_early_ioapic_init();
 }
 
@@ -445,6 +486,7 @@ static struct irq_desc *__setup_vector_irq(int vector)
 		return VECTOR_UNUSED;
 
 	/* Legacy irq found */
+	lapic_reserve_legacy_vector(isairq);
 	return irq_to_desc(isairq);
 }
 
@@ -456,6 +498,11 @@ void setup_vector_irq(int cpu)
 	int vector;
 
 	lockdep_assert_held(&vector_lock);
+
+	/* Clear out the vector matrix array for this CPU */
+	irq_matrix_reset(vector_matrix, cpumask_of(cpu));
+	/* Reserve the system vectors in the external irq vector space */
+	lapic_reserve_system_vectors();
 	/*
 	 * The interrupt affinity logic never targets interrupts to offline
 	 * CPUs. The exception are the legacy PIC interrupts. In general
@@ -602,6 +649,7 @@ asmlinkage __visible void __irq_entry smp_irq_move_cleanup_interrupt(void)
 		}
 		__this_cpu_write(vector_irq[vector], VECTOR_UNUSED);
 		cpumask_clear_cpu(me, data->old_domain);
+		irq_matrix_free(vector_matrix, cpumask_of(me), vector, 1);
 unlock:
 		raw_spin_unlock(&desc->lock);
 	}
@@ -734,6 +782,7 @@ void irq_force_complete_move(struct irq_desc *desc)
 	 */
 	for_each_cpu(cpu, data->old_domain)
 		per_cpu(vector_irq, cpu)[cfg->old_vector] = VECTOR_UNUSED;
+	irq_matrix_free(vector_matrix, data->old_domain, cfg->old_vector, 1);
 
 	/* Cleanup the left overs of the (half finished) move */
 	cpumask_clear(data->old_domain);

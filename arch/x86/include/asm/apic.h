@@ -161,6 +161,8 @@ static inline int apic_is_clustered_box(void)
 #endif
 
 extern int setup_APIC_eilvt(u8 lvt_off, u8 vector, u8 msg_type, u8 mask);
+extern void lapic_reserve_system_vectors(void);
+extern void lapic_mark_legacy_vector(unsigned int isairq);
 
 #else /* !CONFIG_X86_LOCAL_APIC */
 static inline void lapic_shutdown(void) { }
@@ -170,6 +172,8 @@ static inline void disable_local_APIC(void) { }
 # define setup_boot_APIC_clock x86_init_noop
 # define setup_secondary_APIC_clock x86_init_noop
 static inline void lapic_update_tsc_freq(void) { }
+static inline void lapic_reserve_system_vectors(void) { }
+static inline void lapic_mark_legacy_vector(unsigned int isairq) { }
 #endif /* !CONFIG_X86_LOCAL_APIC */
 
 #ifdef CONFIG_X86_X2APIC
