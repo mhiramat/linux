@@ -31,7 +31,7 @@ struct apic_chip_data {
 struct irq_domain *x86_vector_domain;
 EXPORT_SYMBOL_GPL(x86_vector_domain);
 static DEFINE_RAW_SPINLOCK(vector_lock);
-static cpumask_var_t vector_cpumask, vector_searchmask, searched_cpumask;
+static cpumask_var_t vector_searchmask;
 static struct irq_chip lapic_controller;
 static struct irq_matrix *vector_matrix;
 
@@ -109,133 +109,87 @@ static void free_apic_chip_data(struct apic_chip_data *data)
 	}
 }
 
-static int __assign_irq_vector(int irq, struct apic_chip_data *d,
-			       const struct cpumask *mask,
-			       struct irq_data *irqdata)
+/*
+ * Check all entries, whether there is still a move in progress or the
+ * previous move has not been cleaned up completely.
+ */
+static bool irq_is_move_completed(struct apic_chip_data *apicd)
 {
-	/*
-	 * NOTE! The local APIC isn't very good at handling
-	 * multiple interrupts at the same interrupt level.
-	 * As the interrupt level is determined by taking the
-	 * vector number and shifting that right by 4, we
-	 * want to spread these out a bit so that they don't
-	 * all fall in the same interrupt level.
-	 *
-	 * Also, we've got to be careful not to trash gate
-	 * 0x80, because int 0x80 is hm, kind of importantish. ;)
-	 */
-	static int current_vector = FIRST_EXTERNAL_VECTOR + VECTOR_OFFSET_START;
-	static int current_offset = VECTOR_OFFSET_START % 16;
-	int cpu, vector;
+	if (apicd->move_in_progress ||
+	    cpumask_intersects(apicd->old_domain, cpu_online_mask))
+		return false;
+
+	/* Clear any offline CPUs left in the cleanup domain storage */
+	cpumask_clear(apicd->old_domain);
+	return true;
+}
+
+static void
+apic_update_irqcfg(int irq, int vec, unsigned int cpu,
+		   struct apic_chip_data *apicd, struct irq_data *irqd)
+{
+	struct irq_desc *desc = irq_to_desc(irq);
+
+	/* Set up the cleanup domain */
+	if (apicd->cfg.vector) {
+		cpumask_and(apicd->old_domain, apicd->domain, cpu_online_mask);
+		apicd->move_in_progress = !cpumask_empty(apicd->old_domain);
+		apicd->cfg.old_vector =
+			apicd->move_in_progress ? apicd->cfg.vector : 0;
+	} else {
+		cpumask_clear(apicd->domain);
+		apicd->cfg.old_vector = 0;
+	}
+
+	/* Set up the new data and cache the destination APIC id */
+	apicd->cfg.vector = vec;
+	cpumask_copy(apicd->domain, cpumask_of(cpu));
+
+	/* Store the irq descriptor in the vector array */
+	BUG_ON(!IS_ERR_OR_NULL(per_cpu(vector_irq, cpu)[vec]));
+	per_cpu(vector_irq, cpu)[vec] = desc;
+}
+
+static int
+assign_single_cpu(int irq, struct cpumask *msk, struct apic_chip_data *apicd,
+		  struct irq_data *irqd)
+{
+	unsigned int cpu = cpumask_first(apicd->domain);
+	int vec;
 
 	/*
-	 * If there is still a move in progress or the previous move has not
-	 * been cleaned up completely, tell the caller to come back later.
+	 * If the current target CPU is in the new requested affinity mask,
+	 * there is no point in moving the interrupt from one CPU to
+	 * another. Update the destination ID nevertheless, as this might be
+	 * called from the legacy -> IOAPIC take over.
 	 */
-	if (d->move_in_progress ||
-	    cpumask_intersects(d->old_domain, cpu_online_mask))
-		return -EBUSY;
-
-	/* Only try and allocate irqs on cpus that are present */
-	cpumask_clear(d->old_domain);
-	cpumask_clear(searched_cpumask);
-	cpu = cpumask_first_and(mask, cpu_online_mask);
-	while (cpu < nr_cpu_ids) {
-		int new_cpu, offset;
-
-		cpumask_copy(vector_cpumask, cpumask_of(cpu));
-
-		/*
-		 * Clear the offline cpus from @vector_cpumask for searching
-		 * and verify whether the result overlaps with @mask. If true,
-		 * then the call to apic->cpu_mask_to_apicid() will
-		 * succeed as well. If not, no point in trying to find a
-		 * vector in this mask.
-		 */
-		cpumask_and(vector_searchmask, vector_cpumask, cpu_online_mask);
-		if (!cpumask_intersects(vector_searchmask, mask))
-			goto next_cpu;
-
-		if (cpumask_subset(vector_cpumask, d->domain)) {
-			if (cpumask_equal(vector_cpumask, d->domain))
-				goto success;
-			/*
-			 * Mark the cpus which are not longer in the mask for
-			 * cleanup.
-			 */
-			cpumask_andnot(d->old_domain, d->domain, vector_cpumask);
-			vector = d->cfg.vector;
-			goto update;
-		}
-
-		vector = current_vector;
-		offset = current_offset;
-next:
-		vector += 16;
-		if (vector >= FIRST_SYSTEM_VECTOR) {
-			offset = (offset + 1) % 16;
-			vector = FIRST_EXTERNAL_VECTOR + offset;
-		}
-
-		/* If the search wrapped around, try the next cpu */
-		if (unlikely(current_vector == vector))
-			goto next_cpu;
-
-		if (test_bit(vector, reserved_vectors))
-			goto next;
-
-		for_each_cpu(new_cpu, vector_searchmask) {
-			if (!IS_ERR_OR_NULL(per_cpu(vector_irq, new_cpu)[vector]))
-				goto next;
-		}
-		/* Found one! */
-		current_vector = vector;
-		current_offset = offset;
-		/* Schedule the old vector for cleanup on all cpus */
-		if (d->cfg.vector)
-			cpumask_copy(d->old_domain, d->domain);
-		for_each_cpu(new_cpu, vector_searchmask)
-			per_cpu(vector_irq, new_cpu)[vector] = irq_to_desc(irq);
+	if (apicd->cfg.vector && cpumask_intersects(msk, apicd->domain))
 		goto update;
 
-next_cpu:
-		/*
-		 * We exclude the current @vector_cpumask from the requested
-		 * @mask and try again with the next online cpu in the
-		 * result. We cannot modify @mask, so we use @vector_cpumask
-		 * as a temporary buffer here as it will be reassigned when
-		 * calling apic->vector_allocation_domain() above.
-		 */
-		cpumask_or(searched_cpumask, searched_cpumask, vector_cpumask);
-		cpumask_andnot(vector_cpumask, mask, searched_cpumask);
-		cpu = cpumask_first_and(vector_cpumask, cpu_online_mask);
-		continue;
-	}
-	return -ENOSPC;
+	vec = irq_matrix_alloc_single_target(vector_matrix, msk, 1, &cpu);
+	if (vec < 0)
+		return vec;
 
+	apic_update_irqcfg(irq, vec, cpu, apicd, irqd);
 update:
-	/*
-	 * Exclude offline cpus from the cleanup mask and set the
-	 * move_in_progress flag when the result is not empty.
-	 */
-	cpumask_and(d->old_domain, d->old_domain, cpu_online_mask);
-	d->move_in_progress = !cpumask_empty(d->old_domain);
-	d->cfg.old_vector = d->move_in_progress ? d->cfg.vector : 0;
-	d->cfg.vector = vector;
-	cpumask_copy(d->domain, vector_cpumask);
-success:
-	/*
-	 * Cache destination APIC IDs into cfg->dest_apicid. This cannot fail
-	 * as we already established, that mask & d->domain & cpu_online_mask
-	 * is not empty.
-	 *
-	 * vector_searchmask is a subset of d->domain and has the offline
-	 * cpus masked out.
-	 */
-	cpumask_and(vector_searchmask, vector_searchmask, mask);
-	BUG_ON(apic->cpu_mask_to_apicid(vector_searchmask, irqdata,
-					&d->cfg.dest_apicid));
+	apicd->cfg.dest_apicid = apic->calc_dest_apicid(cpu);
+	irq_data_update_effective_affinity(irqd, cpumask_of(cpu));
 	return 0;
+}
+
+static int assign_irq_vector_locked(int irq, const struct cpumask *affmask,
+				    struct apic_chip_data *apicd,
+				    struct irq_data *irqd)
+{
+	if (!irq_is_move_completed(apicd))
+		return -EBUSY;
+
+	/* Exclude offline CPUs from the allocation */
+	cpumask_and(vector_searchmask, affmask, cpu_online_mask);
+	/* No point in proceeding if the searchmask is empty */
+	if (cpumask_empty(vector_searchmask))
+		return -ENOSPC;
+	return assign_single_cpu(irq, vector_searchmask, apicd, irqd);
 }
 
 static int assign_irq_vector(int irq, struct apic_chip_data *data,
@@ -246,7 +200,7 @@ static int assign_irq_vector(int irq, struct apic_chip_data *data,
 	unsigned long flags;
 
 	raw_spin_lock_irqsave(&vector_lock, flags);
-	err = __assign_irq_vector(irq, data, mask, irqdata);
+	err = assign_irq_vector_locked(irq, mask, data, irqdata);
 	raw_spin_unlock_irqrestore(&vector_lock, flags);
 	return err;
 }
@@ -463,9 +417,7 @@ int __init arch_early_irq_init(void)
 	arch_init_msi_domain(x86_vector_domain);
 	arch_init_htirq_domain(x86_vector_domain);
 
-	BUG_ON(!alloc_cpumask_var(&vector_cpumask, GFP_KERNEL));
 	BUG_ON(!alloc_cpumask_var(&vector_searchmask, GFP_KERNEL));
-	BUG_ON(!alloc_cpumask_var(&searched_cpumask, GFP_KERNEL));
 
 	/*
 	 * Allocate the vector matrix allocator data structure and limit the
