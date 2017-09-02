@@ -275,7 +275,7 @@ static void clear_irq_vector(int irq, struct apic_chip_data *data)
 		return;
 
 	vector = data->cfg.vector;
-	for_each_cpu_and(cpu, data->domain, cpu_online_mask)
+	for_each_cpu(cpu, data->domain)
 		per_cpu(vector_irq, cpu)[vector] = VECTOR_UNUSED;
 
 	data->cfg.vector = 0;
@@ -291,7 +291,7 @@ static void clear_irq_vector(int irq, struct apic_chip_data *data)
 
 	desc = irq_to_desc(irq);
 	vector = data->cfg.old_vector;
-	for_each_cpu_and(cpu, data->old_domain, cpu_online_mask)
+	for_each_cpu(cpu, data->old_domain)
 		per_cpu(vector_irq, cpu)[vector] = VECTOR_UNUSED;
 
 	data->move_in_progress = 0;
@@ -697,10 +697,9 @@ void irq_force_complete_move(struct irq_desc *desc)
 	 */
 	raw_spin_lock(&vector_lock);
 	/*
-	 * Clean out all offline cpus (including the outgoing one) from the
-	 * old_domain mask.
+	 * Clean out the outgoing CPU from the old_domain mask.
 	 */
-	cpumask_and(data->old_domain, data->old_domain, cpu_online_mask);
+	cpumask_clear_cpu(smp_processor_id(), data->old_domain);
 
 	/*
 	 * If move_in_progress is cleared and the old_domain mask is empty,
