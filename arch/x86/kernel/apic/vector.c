@@ -290,16 +290,12 @@ static void clear_irq_vector(int irq, struct apic_chip_data *data)
 		return;
 
 	desc = irq_to_desc(irq);
-	for_each_cpu_and(cpu, data->old_domain, cpu_online_mask) {
-		for (vector = FIRST_EXTERNAL_VECTOR; vector < NR_VECTORS;
-		     vector++) {
-			if (per_cpu(vector_irq, cpu)[vector] != desc)
-				continue;
-			per_cpu(vector_irq, cpu)[vector] = VECTOR_UNUSED;
-			break;
-		}
-	}
+	vector = data->cfg.old_vector;
+	for_each_cpu_and(cpu, data->old_domain, cpu_online_mask)
+		per_cpu(vector_irq, cpu)[vector] = VECTOR_UNUSED;
+
 	data->move_in_progress = 0;
+	cpumask_clear(data->old_domain);
 }
 
 void init_irq_alloc_info(struct irq_alloc_info *info,
