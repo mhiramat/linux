@@ -32,6 +32,11 @@
 #include <linux/swap.h>
 #include <linux/string.h>
 #include <linux/init.h>
+#include <linux/sched/mm.h>
+#include <linux/sched/coredump.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/numa_balancing.h>
+#include <linux/sched/task.h>
 #include <linux/pagemap.h>
 #include <linux/perf_event.h>
 #include <linux/highmem.h>
@@ -215,7 +220,24 @@ static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 
 	if (write) {
 		unsigned long size = bprm->vma->vm_end - bprm->vma->vm_start;
-		struct rlimit *rlim;
+		unsigned long ptr_size, limit;
+
+		/*
+		 * Since the stack will hold pointers to the strings, we
+		 * must account for them as well.
+		 *
+		 * The size calculation is the entire vma while each arg page is
+		 * built, so each time we get here it's calculating how far it
+		 * is currently (rather than each call being just the newly
+		 * added size from the arg page).  As a result, we need to
+		 * always add the entire size of the pointers, so that on the
+		 * last call to get_arg_page() we'll actually have the entire
+		 * correct size.
+		 */
+		ptr_size = (bprm->argc + bprm->envc) * sizeof(void *);
+		if (ptr_size > ULONG_MAX - size)
+			goto fail;
+		size += ptr_size;
 
 		acct_arg_size(bprm, size / PAGE_SIZE);
 
@@ -227,20 +249,24 @@ static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 			return page;
 
 		/*
-		 * Limit to 1/4-th the stack size for the argv+env strings.
+		 * Limit to 1/4 of the max stack size or 3/4 of _STK_LIM
+		 * (whichever is smaller) for the argv+env strings.
 		 * This ensures that:
 		 *  - the remaining binfmt code will not run out of stack space,
 		 *  - the program will have a reasonable amount of stack left
 		 *    to work from.
 		 */
-		rlim = current->signal->rlim;
-		if (size > ACCESS_ONCE(rlim[RLIMIT_STACK].rlim_cur) / 4) {
-			put_page(page);
-			return NULL;
-		}
+		limit = _STK_LIM / 4 * 3;
+		limit = min(limit, rlimit(RLIMIT_STACK) / 4);
+		if (size > limit)
+			goto fail;
 	}
 
 	return page;
+
+fail:
+	put_page(page);
+	return NULL;
 }
 
 static void put_arg_page(struct page *page)
@@ -1088,7 +1114,7 @@ static int de_thread(struct task_struct *tsk)
 		struct task_struct *leader = tsk->group_leader;
 
 		for (;;) {
-			threadgroup_change_begin(tsk);
+			cgroup_threadgroup_change_begin(tsk);
 			write_lock_irq(&tasklist_lock);
 			/*
 			 * Do this under tasklist_lock to ensure that
@@ -1099,7 +1125,7 @@ static int de_thread(struct task_struct *tsk)
 				break;
 			__set_current_state(TASK_KILLABLE);
 			write_unlock_irq(&tasklist_lock);
-			threadgroup_change_end(tsk);
+			cgroup_threadgroup_change_end(tsk);
 			schedule();
 			if (unlikely(__fatal_signal_pending(tsk)))
 				goto killed;
@@ -1157,7 +1183,7 @@ static int de_thread(struct task_struct *tsk)
 		if (unlikely(leader->ptrace))
 			__wake_up_parent(leader, leader->parent);
 		write_unlock_irq(&tasklist_lock);
-		threadgroup_change_end(tsk);
+		cgroup_threadgroup_change_end(tsk);
 
 		release_task(leader);
 	}
@@ -1315,6 +1341,7 @@ void setup_new_exec(struct linux_binprm * bprm)
 	else
 		set_dumpable(current->mm, suid_dumpable);
 
+	arch_setup_new_exec();
 	perf_event_exec();
 	__set_task_comm(current, kbasename(bprm->filename), true);
 
@@ -1426,12 +1453,8 @@ static void check_unsafe_exec(struct linux_binprm *bprm)
 	struct task_struct *p = current, *t;
 	unsigned n_fs;
 
-	if (p->ptrace) {
-		if (ptracer_capable(p, current_user_ns()))
-			bprm->unsafe |= LSM_UNSAFE_PTRACE_CAP;
-		else
-			bprm->unsafe |= LSM_UNSAFE_PTRACE;
-	}
+	if (p->ptrace)
+		bprm->unsafe |= LSM_UNSAFE_PTRACE;
 
 	/*
 	 * This isn't strictly necessary, but it makes it harder for LSMs to
@@ -1479,7 +1502,7 @@ static void bprm_fill_uid(struct linux_binprm *bprm)
 	if (task_no_new_privs(current))
 		return;
 
-	inode = file_inode(bprm->file);
+	inode = bprm->file->f_path.dentry->d_inode;
 	mode = READ_ONCE(inode->i_mode);
 	if (!(mode & (S_ISUID|S_ISGID)))
 		return;

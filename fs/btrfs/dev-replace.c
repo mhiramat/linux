@@ -304,8 +304,9 @@ void btrfs_after_dev_replace_commit(struct btrfs_fs_info *fs_info)
 		dev_replace->cursor_left_last_write_of_item;
 }
 
-int btrfs_dev_replace_start(struct btrfs_fs_info *fs_info, char *tgtdev_name,
-				u64 srcdevid, char *srcdev_name, int read_src)
+int btrfs_dev_replace_start(struct btrfs_fs_info *fs_info,
+		const char *tgtdev_name, u64 srcdevid, const char *srcdev_name,
+		int read_src)
 {
 	struct btrfs_root *root = fs_info->dev_root;
 	struct btrfs_trans_handle *trans;
@@ -387,7 +388,7 @@ int btrfs_dev_replace_start(struct btrfs_fs_info *fs_info, char *tgtdev_name,
 	if (ret)
 		btrfs_err(fs_info, "kobj add dev failed %d", ret);
 
-	btrfs_wait_ordered_roots(fs_info, -1, 0, (u64)-1);
+	btrfs_wait_ordered_roots(fs_info, U64_MAX, 0, (u64)-1);
 
 	/* force writing the updated state information to disk */
 	trans = btrfs_start_transaction(root, 0);
@@ -506,7 +507,7 @@ static int btrfs_dev_replace_finishing(struct btrfs_fs_info *fs_info,
 		mutex_unlock(&dev_replace->lock_finishing_cancel_unmount);
 		return ret;
 	}
-	btrfs_wait_ordered_roots(fs_info, -1, 0, (u64)-1);
+	btrfs_wait_ordered_roots(fs_info, U64_MAX, 0, (u64)-1);
 
 	trans = btrfs_start_transaction(root, 0);
 	if (IS_ERR(trans)) {
@@ -545,8 +546,10 @@ static int btrfs_dev_replace_finishing(struct btrfs_fs_info *fs_info,
 		mutex_unlock(&fs_info->chunk_mutex);
 		mutex_unlock(&fs_info->fs_devices->device_list_mutex);
 		mutex_unlock(&uuid_mutex);
+		btrfs_rm_dev_replace_blocked(fs_info);
 		if (tgt_device)
 			btrfs_destroy_dev_replace_tgtdev(fs_info, tgt_device);
+		btrfs_rm_dev_replace_unblocked(fs_info);
 		mutex_unlock(&dev_replace->lock_finishing_cancel_unmount);
 
 		return scrub_ret;
@@ -664,7 +667,7 @@ void btrfs_dev_replace_status(struct btrfs_fs_info *fs_info,
 	case BTRFS_IOCTL_DEV_REPLACE_STATE_STARTED:
 	case BTRFS_IOCTL_DEV_REPLACE_STATE_SUSPENDED:
 		srcdev = dev_replace->srcdev;
-		args->status.progress_1000 = div_u64(dev_replace->cursor_left,
+		args->status.progress_1000 = div64_u64(dev_replace->cursor_left,
 			div_u64(btrfs_device_get_total_bytes(srcdev), 1000));
 		break;
 	}
@@ -783,8 +786,7 @@ int btrfs_resume_dev_replace_async(struct btrfs_fs_info *fs_info)
 	}
 	btrfs_dev_replace_unlock(dev_replace, 1);
 
-	WARN_ON(atomic_xchg(
-		&fs_info->mutually_exclusive_operation_running, 1));
+	WARN_ON(test_and_set_bit(BTRFS_FS_EXCL_OP, &fs_info->flags));
 	task = kthread_run(btrfs_dev_replace_kthread, fs_info, "btrfs-devrepl");
 	return PTR_ERR_OR_ZERO(task);
 }
@@ -813,7 +815,7 @@ static int btrfs_dev_replace_kthread(void *data)
 			(unsigned int)progress);
 	}
 	btrfs_dev_replace_continue_on_mount(fs_info);
-	atomic_set(&fs_info->mutually_exclusive_operation_running, 0);
+	clear_bit(BTRFS_FS_EXCL_OP, &fs_info->flags);
 
 	return 0;
 }

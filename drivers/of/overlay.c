@@ -18,7 +18,6 @@
 #include <linux/string.h>
 #include <linux/ctype.h>
 #include <linux/errno.h>
-#include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/idr.h>
@@ -133,6 +132,10 @@ static int of_overlay_apply_single_device_node(struct of_overlay *ov,
 	/* NOTE: Multiple mods of created nodes not supported */
 	tchild = of_get_child_by_name(target, cname);
 	if (tchild != NULL) {
+		/* new overlay phandle value conflicts with existing value */
+		if (child->phandle)
+			return -EINVAL;
+
 		/* apply overlay recursively */
 		ret = of_overlay_apply_one(ov, tchild, child);
 		of_node_put(tchild);
@@ -314,7 +317,6 @@ static int of_build_overlay_info(struct of_overlay *ov,
 
 	cnt = 0;
 	for_each_child_of_node(tree, node) {
-		memset(&ovinfo[cnt], 0, sizeof(*ovinfo));
 		err = of_fill_overlay_info(ov, node, &ovinfo[cnt]);
 		if (err == 0)
 			cnt++;

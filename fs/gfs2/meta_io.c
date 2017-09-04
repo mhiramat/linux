@@ -201,7 +201,7 @@ static void gfs2_meta_read_endio(struct bio *bio)
 		do {
 			struct buffer_head *next = bh->b_this_page;
 			len -= bh->b_size;
-			bh->b_end_io(bh, !bio->bi_error);
+			bh->b_end_io(bh, !bio->bi_status);
 			bh = next;
 		} while (bh && len);
 	}
@@ -292,7 +292,7 @@ int gfs2_meta_read(struct gfs2_glock *gl, u64 blkno, int flags,
 	wait_on_buffer(bh);
 	if (unlikely(!buffer_uptodate(bh))) {
 		struct gfs2_trans *tr = current->journal_info;
-		if (tr && tr->tr_touched)
+		if (tr && test_bit(TR_TOUCHED, &tr->tr_flags))
 			gfs2_io_error_bh(sdp, bh);
 		brelse(bh);
 		*bhp = NULL;
@@ -319,7 +319,7 @@ int gfs2_meta_wait(struct gfs2_sbd *sdp, struct buffer_head *bh)
 
 	if (!buffer_uptodate(bh)) {
 		struct gfs2_trans *tr = current->journal_info;
-		if (tr && tr->tr_touched)
+		if (tr && test_bit(TR_TOUCHED, &tr->tr_flags))
 			gfs2_io_error_bh(sdp, bh);
 		return -EIO;
 	}
@@ -345,7 +345,7 @@ void gfs2_remove_from_journal(struct buffer_head *bh, int meta)
 			tr->tr_num_buf_rm++;
 		else
 			tr->tr_num_databuf_rm++;
-		tr->tr_touched = 1;
+		set_bit(TR_TOUCHED, &tr->tr_flags);
 		was_pinned = 1;
 		brelse(bh);
 	}

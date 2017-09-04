@@ -21,10 +21,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 
@@ -604,6 +600,14 @@ static int zr364xx_read_video_callback(struct zr364xx_camera *cam,
 	ptr = pdest = frm->lpvbits;
 
 	if (frm->ulState == ZR364XX_READ_IDLE) {
+		if (purb->actual_length < 128) {
+			/* header incomplete */
+			dev_info(&cam->udev->dev,
+				 "%s: buffer (%d bytes) too small to hold jpeg header. Discarding.\n",
+				 __func__, purb->actual_length);
+			return -EINVAL;
+		}
+
 		frm->ulState = ZR364XX_READ_FRAME;
 		frm->cur_size = 0;
 

@@ -16,6 +16,7 @@
 #include <linux/intel-iommu.h>
 #include <linux/mmu_notifier.h>
 #include <linux/sched.h>
+#include <linux/sched/mm.h>
 #include <linux/slab.h>
 #include <linux/intel-svm.h>
 #include <linux/rculist.h>
@@ -222,14 +223,6 @@ static void intel_change_pte(struct mmu_notifier *mn, struct mm_struct *mm,
 	intel_flush_svm_range(svm, address, 1, 1, 0);
 }
 
-static void intel_invalidate_page(struct mmu_notifier *mn, struct mm_struct *mm,
-				  unsigned long address)
-{
-	struct intel_svm *svm = container_of(mn, struct intel_svm, notifier);
-
-	intel_flush_svm_range(svm, address, 1, 1, 0);
-}
-
 /* Pages have been freed at this point */
 static void intel_invalidate_range(struct mmu_notifier *mn,
 				   struct mm_struct *mm,
@@ -284,7 +277,6 @@ static void intel_mm_release(struct mmu_notifier *mn, struct mm_struct *mm)
 static const struct mmu_notifier_ops intel_mmuops = {
 	.release = intel_mm_release,
 	.change_pte = intel_change_pte,
-	.invalidate_page = intel_invalidate_page,
 	.invalidate_range = intel_invalidate_range,
 };
 
@@ -488,6 +480,36 @@ int intel_svm_unbind_mm(struct device *dev, int pasid)
 }
 EXPORT_SYMBOL_GPL(intel_svm_unbind_mm);
 
+int intel_svm_is_pasid_valid(struct device *dev, int pasid)
+{
+	struct intel_iommu *iommu;
+	struct intel_svm *svm;
+	int ret = -EINVAL;
+
+	mutex_lock(&pasid_mutex);
+	iommu = intel_svm_device_to_iommu(dev);
+	if (!iommu || !iommu->pasid_table)
+		goto out;
+
+	svm = idr_find(&iommu->pasid_idr, pasid);
+	if (!svm)
+		goto out;
+
+	/* init_mm is used in this case */
+	if (!svm->mm)
+		ret = 1;
+	else if (atomic_read(&svm->mm->mm_users) > 0)
+		ret = 1;
+	else
+		ret = 0;
+
+ out:
+	mutex_unlock(&pasid_mutex);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(intel_svm_is_pasid_valid);
+
 /* Page request queue descriptor */
 struct page_req_dsc {
 	u64 srr:1;
@@ -579,7 +601,7 @@ static irqreturn_t prq_event_thread(int irq, void *d)
 		if (!svm->mm)
 			goto bad_req;
 		/* If the mm is already defunct, don't handle faults. */
-		if (!atomic_inc_not_zero(&svm->mm->mm_users))
+		if (!mmget_not_zero(svm->mm))
 			goto bad_req;
 		down_read(&svm->mm->mmap_sem);
 		vma = find_extend_vma(svm->mm, address);

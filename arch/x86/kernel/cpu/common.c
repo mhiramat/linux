@@ -7,7 +7,9 @@
 #include <linux/string.h>
 #include <linux/ctype.h>
 #include <linux/delay.h>
-#include <linux/sched.h>
+#include <linux/sched/mm.h>
+#include <linux/sched/clock.h>
+#include <linux/sched/task.h>
 #include <linux/init.h>
 #include <linux/kprobes.h>
 #include <linux/kgdb.h>
@@ -35,6 +37,7 @@
 #include <asm/desc.h>
 #include <asm/fpu/internal.h>
 #include <asm/mtrr.h>
+#include <asm/hwcap2.h>
 #include <linux/numa.h>
 #include <asm/asm.h>
 #include <asm/bugs.h>
@@ -50,6 +53,8 @@
 #endif
 
 #include "cpu.h"
+
+u32 elf_hwcap2 __read_mostly;
 
 /* all of these masks are initialized in setup_cpu_local_masks() */
 cpumask_var_t cpu_initialized_mask;
@@ -162,6 +167,24 @@ static int __init x86_mpx_setup(char *s)
 	return 1;
 }
 __setup("nompx", x86_mpx_setup);
+
+#ifdef CONFIG_X86_64
+static int __init x86_pcid_setup(char *s)
+{
+	/* require an exact match without trailing characters */
+	if (strlen(s))
+		return 0;
+
+	/* do not emit a message if the feature is not present */
+	if (!boot_cpu_has(X86_FEATURE_PCID))
+		return 1;
+
+	setup_clear_cpu_cap(X86_FEATURE_PCID);
+	pr_info("nopcid: PCID feature disabled\n");
+	return 1;
+}
+__setup("nopcid", x86_pcid_setup);
+#endif
 
 static int __init x86_noinvpcid_setup(char *s)
 {
@@ -306,6 +329,25 @@ static __always_inline void setup_smap(struct cpuinfo_x86 *c)
 	}
 }
 
+static void setup_pcid(struct cpuinfo_x86 *c)
+{
+	if (cpu_has(c, X86_FEATURE_PCID)) {
+		if (cpu_has(c, X86_FEATURE_PGE)) {
+			cr4_set_bits(X86_CR4_PCIDE);
+		} else {
+			/*
+			 * flush_tlb_all(), as currently implemented, won't
+			 * work if PCID is on but PGE is not.  Since that
+			 * combination doesn't exist on real hardware, there's
+			 * no reason to try to fully support it, but it's
+			 * polite to avoid corrupting data if we're on
+			 * an improperly configured VM.
+			 */
+			clear_cpu_cap(c, X86_FEATURE_PCID);
+		}
+	}
+}
+
 /*
  * Protection Keys are not available in 32-bit mode.
  */
@@ -443,19 +485,60 @@ void load_percpu_segment(int cpu)
 	load_stack_canary_segment();
 }
 
+/* Setup the fixmap mapping only once per-processor */
+static inline void setup_fixmap_gdt(int cpu)
+{
+#ifdef CONFIG_X86_64
+	/* On 64-bit systems, we use a read-only fixmap GDT. */
+	pgprot_t prot = PAGE_KERNEL_RO;
+#else
+	/*
+	 * On native 32-bit systems, the GDT cannot be read-only because
+	 * our double fault handler uses a task gate, and entering through
+	 * a task gate needs to change an available TSS to busy.  If the GDT
+	 * is read-only, that will triple fault.
+	 *
+	 * On Xen PV, the GDT must be read-only because the hypervisor requires
+	 * it.
+	 */
+	pgprot_t prot = boot_cpu_has(X86_FEATURE_XENPV) ?
+		PAGE_KERNEL_RO : PAGE_KERNEL;
+#endif
+
+	__set_fixmap(get_cpu_gdt_ro_index(cpu), get_cpu_gdt_paddr(cpu), prot);
+}
+
+/* Load the original GDT from the per-cpu structure */
+void load_direct_gdt(int cpu)
+{
+	struct desc_ptr gdt_descr;
+
+	gdt_descr.address = (long)get_cpu_gdt_rw(cpu);
+	gdt_descr.size = GDT_SIZE - 1;
+	load_gdt(&gdt_descr);
+}
+EXPORT_SYMBOL_GPL(load_direct_gdt);
+
+/* Load a fixmap remapping of the per-cpu GDT */
+void load_fixmap_gdt(int cpu)
+{
+	struct desc_ptr gdt_descr;
+
+	gdt_descr.address = (long)get_cpu_gdt_ro(cpu);
+	gdt_descr.size = GDT_SIZE - 1;
+	load_gdt(&gdt_descr);
+}
+EXPORT_SYMBOL_GPL(load_fixmap_gdt);
+
 /*
  * Current gdt points %fs at the "master" per-cpu area: after this,
  * it's on the real one.
  */
 void switch_to_new_gdt(int cpu)
 {
-	struct desc_ptr gdt_descr;
-
-	gdt_descr.address = (long)get_cpu_gdt_table(cpu);
-	gdt_descr.size = GDT_SIZE - 1;
-	load_gdt(&gdt_descr);
+	/* Load the original GDT */
+	load_direct_gdt(cpu);
 	/* Reload the per-cpu base */
-
 	load_percpu_segment(cpu);
 }
 
@@ -1033,6 +1116,7 @@ static void identify_cpu(struct cpuinfo_x86 *c)
 	c->x86_model_id[0] = '\0';  /* Unset */
 	c->x86_max_cores = 1;
 	c->x86_coreid_bits = 0;
+	c->cu_id = 0xff;
 #ifdef CONFIG_X86_64
 	c->x86_clflush_size = 64;
 	c->x86_phys_bits = 36;
@@ -1078,6 +1162,9 @@ static void identify_cpu(struct cpuinfo_x86 *c)
 	setup_smep(c);
 	setup_smap(c);
 
+	/* Set up PCID */
+	setup_pcid(c);
+
 	/*
 	 * The vendor-specific functions might have changed features.
 	 * Now we do "generic changes."
@@ -1102,7 +1189,6 @@ static void identify_cpu(struct cpuinfo_x86 *c)
 	detect_ht(c);
 #endif
 
-	init_hypervisor(c);
 	x86_init_rdrand(c);
 	x86_init_cache_qos(c);
 	setup_pku(c);
@@ -1503,7 +1589,7 @@ void cpu_init(void)
 	for (i = 0; i <= IO_BITMAP_LONGS; i++)
 		t->io_bitmap[i] = ~0UL;
 
-	atomic_inc(&init_mm.mm_count);
+	mmgrab(&init_mm);
 	me->active_mm = &init_mm;
 	BUG_ON(me->mm);
 	enter_lazy_tlb(&init_mm, me);
@@ -1520,6 +1606,9 @@ void cpu_init(void)
 
 	if (is_uv_system())
 		uv_cpu_init();
+
+	setup_fixmap_gdt(cpu);
+	load_fixmap_gdt(cpu);
 }
 
 #else
@@ -1554,7 +1643,7 @@ void cpu_init(void)
 	/*
 	 * Set up and load the per-CPU TSS and LDT
 	 */
-	atomic_inc(&init_mm.mm_count);
+	mmgrab(&init_mm);
 	curr->active_mm = &init_mm;
 	BUG_ON(curr->mm);
 	enter_lazy_tlb(&init_mm, curr);
@@ -1575,6 +1664,9 @@ void cpu_init(void)
 	dbg_restore_debug_regs();
 
 	fpu__init_cpu();
+
+	setup_fixmap_gdt(cpu);
+	load_fixmap_gdt(cpu);
 }
 #endif
 

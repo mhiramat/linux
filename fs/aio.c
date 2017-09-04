@@ -20,7 +20,7 @@
 #include <linux/backing-dev.h>
 #include <linux/uio.h>
 
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <linux/mm.h>
@@ -512,7 +512,7 @@ static int aio_setup_ring(struct kioctx *ctx)
 
 	ctx->mmap_base = do_mmap_pgoff(ctx->aio_ring_file, 0, ctx->mmap_size,
 				       PROT_READ | PROT_WRITE,
-				       MAP_SHARED, 0, &unused);
+				       MAP_SHARED, 0, &unused, NULL);
 	up_write(&mm->mmap_sem);
 	if (IS_ERR((void *)ctx->mmap_base)) {
 		ctx->mmap_size = 0;
@@ -1495,7 +1495,7 @@ static ssize_t aio_read(struct kiocb *req, struct iocb *iocb, bool vectored,
 		return ret;
 	ret = rw_verify_area(READ, file, &req->ki_pos, iov_iter_count(&iter));
 	if (!ret)
-		ret = aio_ret(req, file->f_op->read_iter(req, &iter));
+		ret = aio_ret(req, call_read_iter(file, req, &iter));
 	kfree(iovec);
 	return ret;
 }
@@ -1520,7 +1520,7 @@ static ssize_t aio_write(struct kiocb *req, struct iocb *iocb, bool vectored,
 	if (!ret) {
 		req->ki_flags |= IOCB_WRITE;
 		file_start_write(file);
-		ret = aio_ret(req, file->f_op->write_iter(req, &iter));
+		ret = aio_ret(req, call_write_iter(file, req, &iter));
 		/*
 		 * We release freeze protection in aio_complete().  Fool lockdep
 		 * by telling it the lock got released so that it doesn't
@@ -1541,7 +1541,7 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	ssize_t ret;
 
 	/* enforce forwards compatibility on users */
-	if (unlikely(iocb->aio_reserved1 || iocb->aio_reserved2)) {
+	if (unlikely(iocb->aio_reserved2)) {
 		pr_debug("EINVAL: reserve field set\n");
 		return -EINVAL;
 	}
@@ -1568,6 +1568,7 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	req->common.ki_pos = iocb->aio_offset;
 	req->common.ki_complete = aio_complete;
 	req->common.ki_flags = iocb_flags(req->common.ki_filp);
+	req->common.ki_hint = file_write_hint(file);
 
 	if (iocb->aio_flags & IOCB_FLAG_RESFD) {
 		/*
@@ -1584,6 +1585,18 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 		}
 
 		req->common.ki_flags |= IOCB_EVENTFD;
+	}
+
+	ret = kiocb_set_rw_flags(&req->common, iocb->aio_rw_flags);
+	if (unlikely(ret)) {
+		pr_debug("EINVAL: aio_rw_flags\n");
+		goto out_put_req;
+	}
+
+	if ((req->common.ki_flags & IOCB_NOWAIT) &&
+			!(req->common.ki_flags & IOCB_DIRECT)) {
+		ret = -EOPNOTSUPP;
+		goto out_put_req;
 	}
 
 	ret = put_user(KIOCB_KEY, &user_iocb->aio_key);

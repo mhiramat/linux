@@ -695,7 +695,7 @@ qla2x00_sysfs_write_reset(struct file *filp, struct kobject *kobj,
 	case 0x2025e:
 		if (!IS_P3P_TYPE(ha) || vha != base_vha) {
 			ql_log(ql_log_info, vha, 0x7071,
-			    "FCoE ctx reset no supported.\n");
+			    "FCoE ctx reset not supported.\n");
 			return -EPERM;
 		}
 
@@ -769,7 +769,7 @@ qla2x00_issue_logo(struct file *filp, struct kobject *kobj,
 	did.b.area = (type & 0x0000ff00) >> 8;
 	did.b.al_pa = (type & 0x000000ff);
 
-	ql_log(ql_log_info, vha, 0x70e3, "portid=%02x%02x%02x done\n",
+	ql_log(ql_log_info, vha, 0xd04d, "portid=%02x%02x%02x done\n",
 	    did.b.domain, did.b.area, did.b.al_pa);
 
 	ql_log(ql_log_info, vha, 0x70e4, "%s: %d\n", __func__, type);
@@ -929,7 +929,7 @@ qla2x00_alloc_sysfs_attr(scsi_qla_host_t *vha)
 			    iter->name, ret);
 		else
 			ql_dbg(ql_dbg_init, vha, 0x00f4,
-			    "Successfully created sysfs %s binary attribure.\n",
+			    "Successfully created sysfs %s binary attribute.\n",
 			    iter->name);
 	}
 }
@@ -2096,7 +2096,7 @@ qla24xx_vport_create(struct fc_vport *fc_vport, bool disable)
 	}
 
 	if (qos) {
-		qpair = qla2xxx_create_qpair(vha, qos, vha->vp_idx);
+		qpair = qla2xxx_create_qpair(vha, qos, vha->vp_idx, true);
 		if (!qpair)
 			ql_log(ql_log_warn, vha, 0x7084,
 			    "Can't create qpair for VP[%d]\n",
@@ -2154,8 +2154,6 @@ qla24xx_vport_delete(struct fc_vport *fc_vport)
 		    "Timer for the VP[%d] has stopped\n", vha->vp_idx);
 	}
 
-	BUG_ON(atomic_read(&vha->vref_count));
-
 	qla2x00_free_fcports(vha);
 
 	mutex_lock(&ha->vport_lock);
@@ -2163,7 +2161,10 @@ qla24xx_vport_delete(struct fc_vport *fc_vport)
 	clear_bit(vha->vp_idx, ha->vp_idx_map);
 	mutex_unlock(&ha->vport_lock);
 
-	if (vha->qpair->vp_idx == vha->vp_idx) {
+	dma_free_coherent(&ha->pdev->dev, vha->gnl.size, vha->gnl.l,
+	    vha->gnl.ldma);
+
+	if (vha->qpair && vha->qpair->vp_idx == vha->vp_idx) {
 		if (qla2xxx_delete_qpair(vha, vha->qpair) != QLA_SUCCESS)
 			ql_log(ql_log_warn, vha, 0x7087,
 			    "Queue Pair delete failed.\n");
@@ -2288,7 +2289,7 @@ qla2x00_init_host_attr(scsi_qla_host_t *vha)
 	fc_host_dev_loss_tmo(vha->host) = ha->port_down_retry_count;
 	fc_host_node_name(vha->host) = wwn_to_u64(vha->node_name);
 	fc_host_port_name(vha->host) = wwn_to_u64(vha->port_name);
-	fc_host_supported_classes(vha->host) = ha->tgt.enable_class_2 ?
+	fc_host_supported_classes(vha->host) = ha->base_qpair->enable_class_2 ?
 			(FC_COS_CLASS2|FC_COS_CLASS3) : FC_COS_CLASS3;
 	fc_host_max_npiv_vports(vha->host) = ha->max_npiv_vports;
 	fc_host_npiv_vports_inuse(vha->host) = ha->cur_vport_count;

@@ -32,7 +32,7 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/seq_file.h>
 #include <linux/termios.h>
 #include <linux/tty.h>
@@ -690,7 +690,7 @@ static int ircomm_tty_write(struct tty_struct *tty,
 		}
 
 		/* Copy data */
-		memcpy(skb_put(skb,size), buf + len, size);
+		skb_put_data(skb, buf + len, size);
 
 		count -= size;
 		len += size;

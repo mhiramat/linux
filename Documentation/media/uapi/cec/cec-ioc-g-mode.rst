@@ -31,11 +31,6 @@ Arguments
 Description
 ===========
 
-.. note::
-
-   This documents the proposed CEC API. This API is not yet finalized
-   and is currently only available as a staging kernel module.
-
 By default any filehandle can use :ref:`CEC_TRANSMIT`, but in order to prevent
 applications from stepping on each others toes it must be possible to
 obtain exclusive access to the CEC adapter. This ioctl sets the
@@ -254,3 +249,15 @@ Return Value
 On success 0 is returned, on error -1 and the ``errno`` variable is set
 appropriately. The generic error codes are described at the
 :ref:`Generic Error Codes <gen-errors>` chapter.
+
+The :ref:`ioctl CEC_S_MODE <CEC_S_MODE>` can return the following
+error codes:
+
+EINVAL
+    The requested mode is invalid.
+
+EPERM
+    Monitor mode is requested without having root permissions
+
+EBUSY
+    Someone else is already an exclusive follower or initiator.

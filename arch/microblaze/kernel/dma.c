@@ -65,8 +65,7 @@ static int dma_direct_map_sg(struct device *dev, struct scatterlist *sgl,
 		if (attrs & DMA_ATTR_SKIP_CPU_SYNC)
 			continue;
 
-		__dma_sync(page_to_phys(sg_page(sg)) + sg->offset,
-							sg->length, direction);
+		__dma_sync(sg_phys(sg), sg->length, direction);
 	}
 
 	return nents;
@@ -187,7 +186,7 @@ int dma_direct_mmap_coherent(struct device *dev, struct vm_area_struct *vma,
 #endif
 }
 
-struct dma_map_ops dma_direct_ops = {
+const struct dma_map_ops dma_direct_ops = {
 	.alloc		= dma_direct_alloc_coherent,
 	.free		= dma_direct_free_coherent,
 	.mmap		= dma_direct_mmap_coherent,

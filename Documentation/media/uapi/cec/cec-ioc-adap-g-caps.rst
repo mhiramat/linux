@@ -29,11 +29,6 @@ Arguments
 Description
 ===========
 
-.. note::
-
-   This documents the proposed CEC API. This API is not yet finalized
-   and is currently only available as a staging kernel module.
-
 All cec devices must support :ref:`ioctl CEC_ADAP_G_CAPS <CEC_ADAP_G_CAPS>`. To query
 device information, applications call the ioctl with a pointer to a
 struct :c:type:`cec_caps`. The driver fills the structure and
@@ -118,6 +113,14 @@ returns the information to the application. The ioctl never fails.
       - 0x00000020
       - The CEC hardware can monitor all messages, not just directed and
 	broadcast messages.
+    * .. _`CEC-CAP-NEEDS-HPD`:
+
+      - ``CEC_CAP_NEEDS_HPD``
+      - 0x00000040
+      - The CEC hardware is only active if the HDMI Hotplug Detect pin is
+        high. This makes it impossible to use CEC to wake up displays that
+	set the HPD pin low when in standby mode, but keep the CEC bus
+	alive.
 
 
 

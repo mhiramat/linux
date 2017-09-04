@@ -32,6 +32,7 @@
 #include <linux/device.h>
 #include <linux/efi.h>
 #include <linux/fb.h>
+#include <linux/mem_encrypt.h>
 
 #include <asm/fb.h>
 
@@ -1331,22 +1332,13 @@ static int do_fscreeninfo_to_user(struct fb_fix_screeninfo *fix,
 static int fb_get_fscreeninfo(struct fb_info *info, unsigned int cmd,
 			      unsigned long arg)
 {
-	mm_segment_t old_fs;
 	struct fb_fix_screeninfo fix;
-	struct fb_fix_screeninfo32 __user *fix32;
-	int err;
 
-	fix32 = compat_ptr(arg);
-
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
-	err = do_fb_ioctl(info, cmd, (unsigned long) &fix);
-	set_fs(old_fs);
-
-	if (!err)
-		err = do_fscreeninfo_to_user(&fix, fix32);
-
-	return err;
+	if (!lock_fb_info(info))
+		return -ENODEV;
+	fix = info->fix;
+	unlock_fb_info(info);
+	return do_fscreeninfo_to_user(&fix, compat_ptr(arg));
 }
 
 static long fb_compat_ioctl(struct file *file, unsigned int cmd,
@@ -1405,6 +1397,12 @@ fb_mmap(struct file *file, struct vm_area_struct * vma)
 	mutex_lock(&info->mm_lock);
 	if (fb->fb_mmap) {
 		int res;
+
+		/*
+		 * The framebuffer needs to be accessed decrypted, be sure
+		 * SME protection is removed ahead of the call
+		 */
+		vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);
 		res = fb->fb_mmap(info, vma);
 		mutex_unlock(&info->mm_lock);
 		return res;
@@ -1430,6 +1428,11 @@ fb_mmap(struct file *file, struct vm_area_struct * vma)
 	mutex_unlock(&info->mm_lock);
 
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+	/*
+	 * The framebuffer needs to be accessed decrypted, be sure
+	 * SME protection is removed
+	 */
+	vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);
 	fb_pgprotect(file, vma, start);
 
 	return vm_iomap_memory(vma, start, len);
@@ -1492,6 +1495,21 @@ __releases(&info->lock)
 	return 0;
 }
 
+#if defined(CONFIG_FB_PROVIDE_GET_FB_UNMAPPED_AREA) && !defined(CONFIG_MMU)
+unsigned long get_fb_unmapped_area(struct file *filp,
+				   unsigned long addr, unsigned long len,
+				   unsigned long pgoff, unsigned long flags)
+{
+	struct fb_info * const info = filp->private_data;
+	unsigned long fb_size = PAGE_ALIGN(info->fix.smem_len);
+
+	if (pgoff > fb_size || len > fb_size - pgoff)
+		return -EINVAL;
+
+	return (unsigned long)info->screen_base + pgoff;
+}
+#endif
+
 static const struct file_operations fb_fops = {
 	.owner =	THIS_MODULE,
 	.read =		fb_read,
@@ -1503,7 +1521,9 @@ static const struct file_operations fb_fops = {
 	.mmap =		fb_mmap,
 	.open =		fb_open,
 	.release =	fb_release,
-#ifdef HAVE_ARCH_FB_UNMAPPED_AREA
+#if defined(HAVE_ARCH_FB_UNMAPPED_AREA) || \
+	(defined(CONFIG_FB_PROVIDE_GET_FB_UNMAPPED_AREA) && \
+	 !defined(CONFIG_MMU))
 	.get_unmapped_area = get_fb_unmapped_area,
 #endif
 #ifdef CONFIG_FB_DEFERRED_IO

@@ -225,6 +225,7 @@ struct ssusb_mtk {
 	/* common power & clock */
 	struct regulator *vusb33;
 	struct clk *sys_clk;
+	struct clk *ref_clk;
 	/* otg */
 	struct otg_switch_mtk otg_switch;
 	enum usb_dr_mode dr_mode;
@@ -355,12 +356,8 @@ static inline struct mtu3_ep *to_mtu3_ep(struct usb_ep *ep)
 
 static inline struct mtu3_request *next_request(struct mtu3_ep *mep)
 {
-	struct list_head *queue = &mep->req_list;
-
-	if (list_empty(queue))
-		return NULL;
-
-	return list_first_entry(queue, struct mtu3_request, list);
+	return list_first_entry_or_null(&mep->req_list, struct mtu3_request,
+					list);
 }
 
 static inline void mtu3_writel(void __iomem *base, u32 offset, u32 data)

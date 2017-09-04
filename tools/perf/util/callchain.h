@@ -5,7 +5,9 @@
 #include <linux/list.h>
 #include <linux/rbtree.h>
 #include "event.h"
+#include "map.h"
 #include "symbol.h"
+#include "branch.h"
 
 #define HELP_PAD "\t\t\t\t"
 
@@ -76,7 +78,8 @@ typedef void (*sort_chain_func_t)(struct rb_root *, struct callchain_root *,
 
 enum chain_key {
 	CCKEY_FUNCTION,
-	CCKEY_ADDRESS
+	CCKEY_ADDRESS,
+	CCKEY_SRCLINE
 };
 
 enum chain_value {
@@ -117,6 +120,7 @@ struct callchain_list {
 	u64			cycles_count;
 	u64			iter_count;
 	u64			samples_count;
+	struct branch_type_stat brtype_stat;
 	char		       *srcline;
 	struct list_head	list;
 };
@@ -133,6 +137,7 @@ struct callchain_cursor_node {
 	struct symbol			*sym;
 	bool				branch;
 	struct branch_flags		branch_flags;
+	u64				branch_from;
 	int				nr_loop_iter;
 	int				samples;
 	struct callchain_cursor_node	*next;
@@ -184,14 +189,19 @@ int callchain_merge(struct callchain_cursor *cursor,
  */
 static inline void callchain_cursor_reset(struct callchain_cursor *cursor)
 {
+	struct callchain_cursor_node *node;
+
 	cursor->nr = 0;
 	cursor->last = &cursor->first;
+
+	for (node = cursor->first; node != NULL; node = node->next)
+		map__zput(node->map);
 }
 
 int callchain_cursor_append(struct callchain_cursor *cursor, u64 ip,
 			    struct map *map, struct symbol *sym,
 			    bool branch, struct branch_flags *flags,
-			    int nr_loop_iter, int samples);
+			    int nr_loop_iter, int samples, u64 branch_from);
 
 /* Close a cursor writing session. Initialize for the reader */
 static inline void callchain_cursor_commit(struct callchain_cursor *cursor)

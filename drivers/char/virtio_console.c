@@ -1130,12 +1130,14 @@ static const struct file_operations port_fops = {
  * We turn the characters into a scatter-gather list, add it to the
  * output queue and then kick the Host.  Then we sit here waiting for
  * it to finish: inefficient in theory, but in practice
- * implementations will do it immediately (lguest's Launcher does).
+ * implementations will do it immediately.
  */
 static int put_chars(u32 vtermno, const char *buf, int count)
 {
 	struct port *port;
 	struct scatterlist sg[1];
+	void *data;
+	int ret;
 
 	if (unlikely(early_put_chars))
 		return early_put_chars(vtermno, buf, count);
@@ -1144,8 +1146,14 @@ static int put_chars(u32 vtermno, const char *buf, int count)
 	if (!port)
 		return -EPIPE;
 
-	sg_init_one(sg, buf, count);
-	return __send_to_port(port, sg, 1, count, (void *)buf, false);
+	data = kmemdup(buf, count, GFP_ATOMIC);
+	if (!data)
+		return -ENOMEM;
+
+	sg_init_one(sg, data, count);
+	ret = __send_to_port(port, sg, 1, count, data, false);
+	kfree(data);
+	return ret;
 }
 
 /*
@@ -1937,9 +1945,9 @@ static int init_vqs(struct ports_device *portdev)
 		}
 	}
 	/* Find the queues. */
-	err = portdev->vdev->config->find_vqs(portdev->vdev, nr_queues, vqs,
-					      io_callbacks,
-					      (const char **)io_names);
+	err = virtio_find_vqs(portdev->vdev, nr_queues, vqs,
+			      io_callbacks,
+			      (const char **)io_names, NULL);
 	if (err)
 		goto free;
 
@@ -2194,14 +2202,16 @@ static int virtcons_freeze(struct virtio_device *vdev)
 
 	vdev->config->reset(vdev);
 
-	virtqueue_disable_cb(portdev->c_ivq);
+	if (use_multiport(portdev))
+		virtqueue_disable_cb(portdev->c_ivq);
 	cancel_work_sync(&portdev->control_work);
 	cancel_work_sync(&portdev->config_work);
 	/*
 	 * Once more: if control_work_handler() was running, it would
 	 * enable the cb as the last step.
 	 */
-	virtqueue_disable_cb(portdev->c_ivq);
+	if (use_multiport(portdev))
+		virtqueue_disable_cb(portdev->c_ivq);
 	remove_controlq_data(portdev);
 
 	list_for_each_entry(port, &portdev->ports, list) {
@@ -2294,7 +2304,7 @@ static int __init init(void)
 
 	pdrvdata.debugfs_dir = debugfs_create_dir("virtio-ports", NULL);
 	if (!pdrvdata.debugfs_dir)
-		pr_warning("Error creating debugfs dir for virtio-ports\n");
+		pr_warn("Error creating debugfs dir for virtio-ports\n");
 	INIT_LIST_HEAD(&pdrvdata.consoles);
 	INIT_LIST_HEAD(&pdrvdata.portdevs);
 

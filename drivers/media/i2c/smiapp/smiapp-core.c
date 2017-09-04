@@ -27,12 +27,13 @@
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/smiapp.h>
 #include <linux/v4l2-mediabus.h>
+#include <media/v4l2-fwnode.h>
 #include <media/v4l2-device.h>
-#include <media/v4l2-of.h>
 
 #include "smiapp.h"
 
@@ -2741,9 +2742,7 @@ static const struct v4l2_subdev_internal_ops smiapp_internal_ops = {
  * I2C Driver
  */
 
-#ifdef CONFIG_PM
-
-static int smiapp_suspend(struct device *dev)
+static int __maybe_unused smiapp_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
@@ -2768,7 +2767,7 @@ static int smiapp_suspend(struct device *dev)
 	return 0;
 }
 
-static int smiapp_resume(struct device *dev)
+static int __maybe_unused smiapp_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
@@ -2783,29 +2782,23 @@ static int smiapp_resume(struct device *dev)
 	return rval;
 }
 
-#else
-
-#define smiapp_suspend	NULL
-#define smiapp_resume	NULL
-
-#endif /* CONFIG_PM */
-
 static struct smiapp_hwconfig *smiapp_get_hwconfig(struct device *dev)
 {
 	struct smiapp_hwconfig *hwcfg;
-	struct v4l2_of_endpoint *bus_cfg;
-	struct device_node *ep;
+	struct v4l2_fwnode_endpoint *bus_cfg;
+	struct fwnode_handle *ep;
+	struct fwnode_handle *fwnode = dev_fwnode(dev);
 	int i;
 	int rval;
 
-	if (!dev->of_node)
+	if (!fwnode)
 		return dev->platform_data;
 
-	ep = of_graph_get_next_endpoint(dev->of_node, NULL);
+	ep = fwnode_graph_get_next_endpoint(fwnode, NULL);
 	if (!ep)
 		return NULL;
 
-	bus_cfg = v4l2_of_alloc_parse_endpoint(ep);
+	bus_cfg = v4l2_fwnode_endpoint_alloc_parse(ep);
 	if (IS_ERR(bus_cfg))
 		goto out_err;
 
@@ -2826,11 +2819,10 @@ static struct smiapp_hwconfig *smiapp_get_hwconfig(struct device *dev)
 	dev_dbg(dev, "lanes %u\n", hwcfg->lanes);
 
 	/* NVM size is not mandatory */
-	of_property_read_u32(dev->of_node, "nokia,nvm-size",
-				    &hwcfg->nvm_size);
+	fwnode_property_read_u32(fwnode, "nokia,nvm-size", &hwcfg->nvm_size);
 
-	rval = of_property_read_u32(dev->of_node, "clock-frequency",
-				    &hwcfg->ext_clk);
+	rval = fwnode_property_read_u32(fwnode, "clock-frequency",
+					&hwcfg->ext_clk);
 	if (rval) {
 		dev_warn(dev, "can't get clock-frequency\n");
 		goto out_err;
@@ -2855,13 +2847,13 @@ static struct smiapp_hwconfig *smiapp_get_hwconfig(struct device *dev)
 		dev_dbg(dev, "freq %d: %lld\n", i, hwcfg->op_sys_clock[i]);
 	}
 
-	v4l2_of_free_endpoint(bus_cfg);
-	of_node_put(ep);
+	v4l2_fwnode_endpoint_free(bus_cfg);
+	fwnode_handle_put(ep);
 	return hwcfg;
 
 out_err:
-	v4l2_of_free_endpoint(bus_cfg);
-	of_node_put(ep);
+	v4l2_fwnode_endpoint_free(bus_cfg);
+	fwnode_handle_put(ep);
 	return NULL;
 }
 
@@ -2913,13 +2905,9 @@ static int smiapp_probe(struct i2c_client *client,
 	if (IS_ERR(sensor->xshutdown))
 		return PTR_ERR(sensor->xshutdown);
 
-	pm_runtime_enable(&client->dev);
-
-	rval = pm_runtime_get_sync(&client->dev);
-	if (rval < 0) {
-		rval = -ENODEV;
-		goto out_power_off;
-	}
+	rval = smiapp_power_on(&client->dev);
+	if (rval < 0)
+		return rval;
 
 	rval = smiapp_identify_module(sensor);
 	if (rval) {
@@ -3100,6 +3088,9 @@ static int smiapp_probe(struct i2c_client *client,
 	if (rval < 0)
 		goto out_media_entity_cleanup;
 
+	pm_runtime_set_active(&client->dev);
+	pm_runtime_get_noresume(&client->dev);
+	pm_runtime_enable(&client->dev);
 	pm_runtime_set_autosuspend_delay(&client->dev, 1000);
 	pm_runtime_use_autosuspend(&client->dev);
 	pm_runtime_put_autosuspend(&client->dev);
@@ -3113,8 +3104,7 @@ out_cleanup:
 	smiapp_cleanup(sensor);
 
 out_power_off:
-	pm_runtime_put(&client->dev);
-	pm_runtime_disable(&client->dev);
+	smiapp_power_off(&client->dev);
 
 	return rval;
 }
@@ -3127,8 +3117,10 @@ static int smiapp_remove(struct i2c_client *client)
 
 	v4l2_async_unregister_subdev(subdev);
 
-	pm_runtime_suspend(&client->dev);
 	pm_runtime_disable(&client->dev);
+	if (!pm_runtime_status_suspended(&client->dev))
+		smiapp_power_off(&client->dev);
+	pm_runtime_set_suspended(&client->dev);
 
 	for (i = 0; i < sensor->ssds_used; i++) {
 		v4l2_device_unregister_subdev(&sensor->ssds[i].sd);

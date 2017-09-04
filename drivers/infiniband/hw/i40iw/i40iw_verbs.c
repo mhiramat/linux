@@ -97,19 +97,9 @@ static int i40iw_query_port(struct ib_device *ibdev,
 	struct i40iw_device *iwdev = to_iwdev(ibdev);
 	struct net_device *netdev = iwdev->netdev;
 
-	memset(props, 0, sizeof(*props));
-
+	/* props being zeroed by the caller, avoid zeroing it here */
 	props->max_mtu = IB_MTU_4096;
-	if (netdev->mtu >= 4096)
-		props->active_mtu = IB_MTU_4096;
-	else if (netdev->mtu >= 2048)
-		props->active_mtu = IB_MTU_2048;
-	else if (netdev->mtu >= 1024)
-		props->active_mtu = IB_MTU_1024;
-	else if (netdev->mtu >= 512)
-		props->active_mtu = IB_MTU_512;
-	else
-		props->active_mtu = IB_MTU_256;
+	props->active_mtu = ib_mtu_int_to_enum(netdev->mtu);
 
 	props->lid = 1;
 	if (netif_carrier_ok(iwdev->netdev))
@@ -436,9 +426,13 @@ void i40iw_free_qp_resources(struct i40iw_device *iwdev,
 			     struct i40iw_qp *iwqp,
 			     u32 qp_num)
 {
+	struct i40iw_pbl *iwpbl = &iwqp->iwpbl;
+
 	i40iw_dealloc_push_page(iwdev, &iwqp->sc_qp);
 	if (qp_num)
 		i40iw_free_resource(iwdev, iwdev->allocated_qps, qp_num);
+	if (iwpbl->pbl_allocated)
+		i40iw_free_pble(iwdev->pble_rsrc, &iwpbl->pble_alloc);
 	i40iw_free_dma_mem(iwdev->sc_dev.hw, &iwqp->q2_ctx_mem);
 	i40iw_free_dma_mem(iwdev->sc_dev.hw, &iwqp->kqp.dma_mem);
 	kfree(iwqp->kqp.wrid_mem);
@@ -493,7 +487,7 @@ static int i40iw_setup_virt_qp(struct i40iw_device *iwdev,
 			       struct i40iw_qp *iwqp,
 			       struct i40iw_qp_init_info *init_info)
 {
-	struct i40iw_pbl *iwpbl = iwqp->iwpbl;
+	struct i40iw_pbl *iwpbl = &iwqp->iwpbl;
 	struct i40iw_qp_mr *qpmr = &iwpbl->qp_mr;
 
 	iwqp->page = qpmr->sq_page;
@@ -698,19 +692,22 @@ static struct ib_qp *i40iw_create_qp(struct ib_pd *ibpd,
 			ucontext = to_ucontext(ibpd->uobject->context);
 
 			if (req.user_wqe_buffers) {
+				struct i40iw_pbl *iwpbl;
+
 				spin_lock_irqsave(
 				    &ucontext->qp_reg_mem_list_lock, flags);
-				iwqp->iwpbl = i40iw_get_pbl(
+				iwpbl = i40iw_get_pbl(
 				    (unsigned long)req.user_wqe_buffers,
 				    &ucontext->qp_reg_mem_list);
 				spin_unlock_irqrestore(
 				    &ucontext->qp_reg_mem_list_lock, flags);
 
-				if (!iwqp->iwpbl) {
+				if (!iwpbl) {
 					err_code = -ENODATA;
 					i40iw_pr_err("no pbl info\n");
 					goto error;
 				}
+				memcpy(&iwqp->iwpbl, iwpbl, sizeof(iwqp->iwpbl));
 			}
 		}
 		err_code = i40iw_setup_virt_qp(iwdev, iwqp, &init_info);
@@ -1171,8 +1168,10 @@ static struct ib_cq *i40iw_create_cq(struct ib_device *ibdev,
 		memset(&req, 0, sizeof(req));
 		iwcq->user_mode = true;
 		ucontext = to_ucontext(context);
-		if (ib_copy_from_udata(&req, udata, sizeof(struct i40iw_create_cq_req)))
+		if (ib_copy_from_udata(&req, udata, sizeof(struct i40iw_create_cq_req))) {
+			err_code = -EFAULT;
 			goto cq_free_resources;
+		}
 
 		spin_lock_irqsave(&ucontext->cq_reg_mem_list_lock, flags);
 		iwpbl = i40iw_get_pbl((unsigned long)req.user_cq_buffer,
@@ -1355,7 +1354,7 @@ static void i40iw_copy_user_pgaddrs(struct i40iw_mr *iwmr,
 {
 	struct ib_umem *region = iwmr->region;
 	struct i40iw_pbl *iwpbl = &iwmr->iwpbl;
-	int chunk_pages, entry, pg_shift, i;
+	int chunk_pages, entry, i;
 	struct i40iw_pble_alloc *palloc = &iwpbl->pble_alloc;
 	struct i40iw_pble_info *pinfo;
 	struct scatterlist *sg;
@@ -1364,14 +1363,14 @@ static void i40iw_copy_user_pgaddrs(struct i40iw_mr *iwmr,
 
 	pinfo = (level == I40IW_LEVEL_1) ? NULL : palloc->level2.leaf;
 
-	pg_shift = ffs(region->page_size) - 1;
 	for_each_sg(region->sg_head.sgl, sg, region->nmap, entry) {
-		chunk_pages = sg_dma_len(sg) >> pg_shift;
+		chunk_pages = sg_dma_len(sg) >> region->page_shift;
 		if ((iwmr->type == IW_MEMREG_TYPE_QP) &&
 		    !iwpbl->qp_mr.sq_page)
 			iwpbl->qp_mr.sq_page = sg_page(sg);
 		for (i = 0; i < chunk_pages; i++) {
-			pg_addr = sg_dma_address(sg) + region->page_size * i;
+			pg_addr = sg_dma_address(sg) +
+				(i << region->page_shift);
 
 			if ((entry + i) == 0)
 				*pbl = cpu_to_le64(pg_addr & iwmr->page_msk);
@@ -1857,7 +1856,7 @@ static struct ib_mr *i40iw_reg_user_mr(struct ib_pd *pd,
 	iwmr->ibmr.device = pd->device;
 	ucontext = to_ucontext(pd->uobject->context);
 
-	iwmr->page_size = region->page_size;
+	iwmr->page_size = PAGE_SIZE;
 	iwmr->page_msk = PAGE_MASK;
 
 	if (region->hugetlb && (req.reg_type == IW_MEMREG_TYPE_MEM))
@@ -2073,7 +2072,7 @@ static int i40iw_dereg_mr(struct ib_mr *ib_mr)
 			ucontext = to_ucontext(ibpd->uobject->context);
 			i40iw_del_memlist(iwmr, ucontext);
 		}
-		if (iwpbl->pbl_allocated)
+		if (iwpbl->pbl_allocated && iwmr->type != IW_MEMREG_TYPE_QP)
 			i40iw_free_pble(iwdev->pble_rsrc, palloc);
 		kfree(iwmr);
 		return 0;
@@ -2506,14 +2505,15 @@ static int i40iw_port_immutable(struct ib_device *ibdev, u8 port_num,
 	struct ib_port_attr attr;
 	int err;
 
-	err = i40iw_query_port(ibdev, port_num, &attr);
+	immutable->core_cap_flags = RDMA_CORE_PORT_IWARP;
+
+	err = ib_query_port(ibdev, port_num, &attr);
 
 	if (err)
 		return err;
 
 	immutable->pkey_tbl_len = attr.pkey_tbl_len;
 	immutable->gid_tbl_len = attr.gid_tbl_len;
-	immutable->core_cap_flags = RDMA_CORE_PORT_IWARP;
 
 	return 0;
 }
@@ -2584,13 +2584,12 @@ static const char * const i40iw_hw_stat_names[] = {
 		"iwRdmaInv"
 };
 
-static void i40iw_get_dev_fw_str(struct ib_device *dev, char *str,
-				 size_t str_len)
+static void i40iw_get_dev_fw_str(struct ib_device *dev, char *str)
 {
 	u32 firmware_version = I40IW_FW_VERSION;
 
-	snprintf(str, str_len, "%u.%u", firmware_version,
-		       (firmware_version & 0x000000ff));
+	snprintf(str, IB_FW_VERSION_NAME_MAX, "%u.%u", firmware_version,
+		 (firmware_version & 0x000000ff));
 }
 
 /**
@@ -2705,7 +2704,7 @@ static int i40iw_query_pkey(struct ib_device *ibdev,
  * @ah_attr: address handle attributes
  */
 static struct ib_ah *i40iw_create_ah(struct ib_pd *ibpd,
-				     struct ib_ah_attr *attr,
+				     struct rdma_ah_attr *attr,
 				     struct ib_udata *udata)
 
 {
@@ -2767,7 +2766,6 @@ static struct i40iw_ib_device *i40iw_init_rdma_device(struct i40iw_device *iwdev
 	    (1ull << IB_USER_VERBS_CMD_POST_SEND);
 	iwibdev->ibdev.phys_port_cnt = 1;
 	iwibdev->ibdev.num_comp_vectors = iwdev->ceqs_count;
-	iwibdev->ibdev.dma_device = &pcidev->dev;
 	iwibdev->ibdev.dev.parent = &pcidev->dev;
 	iwibdev->ibdev.query_port = i40iw_query_port;
 	iwibdev->ibdev.modify_port = i40iw_modify_port;

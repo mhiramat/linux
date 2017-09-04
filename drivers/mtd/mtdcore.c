@@ -46,7 +46,7 @@
 
 #include "mtdcore.h"
 
-static struct backing_dev_info *mtd_bdi;
+struct backing_dev_info *mtd_bdi;
 
 #ifdef CONFIG_PM_SLEEP
 
@@ -496,10 +496,8 @@ int add_mtd_device(struct mtd_info *mtd)
 	 * mtd_device_parse_register() multiple times on the same master MTD,
 	 * especially with CONFIG_MTD_PARTITIONED_MASTER=y.
 	 */
-	if (WARN_ONCE(mtd->backing_dev_info, "MTD already registered\n"))
+	if (WARN_ONCE(mtd->dev.type, "MTD already registered\n"))
 		return -EEXIST;
-
-	mtd->backing_dev_info = mtd_bdi;
 
 	BUG_ON(mtd->writesize == 0);
 	mutex_lock(&mtd_table_mutex);
@@ -993,7 +991,7 @@ EXPORT_SYMBOL_GPL(mtd_point);
 /* We probably shouldn't allow XIP if the unpoint isn't a NULL */
 int mtd_unpoint(struct mtd_info *mtd, loff_t from, size_t len)
 {
-	if (!mtd->_point)
+	if (!mtd->_unpoint)
 		return -EOPNOTSUPP;
 	if (from < 0 || from >= mtd->size || len > mtd->size - from)
 		return -EINVAL;
@@ -1128,7 +1126,7 @@ EXPORT_SYMBOL_GPL(mtd_write_oob);
  * @oobecc: OOB region struct filled with the appropriate ECC position
  *	    information
  *
- * This functions return ECC section information in the OOB area. I you want
+ * This function returns ECC section information in the OOB area. If you want
  * to get all the ECC bytes information, then you should call
  * mtd_ooblayout_ecc(mtd, section++, oobecc) until it returns -ERANGE.
  *
@@ -1160,7 +1158,7 @@ EXPORT_SYMBOL_GPL(mtd_ooblayout_ecc);
  * @oobfree: OOB region struct filled with the appropriate free position
  *	     information
  *
- * This functions return free bytes position in the OOB area. I you want
+ * This function returns free bytes position in the OOB area. If you want
  * to get all the free bytes information, then you should call
  * mtd_ooblayout_free(mtd, section++, oobfree) until it returns -ERANGE.
  *
@@ -1190,7 +1188,7 @@ EXPORT_SYMBOL_GPL(mtd_ooblayout_free);
  * @iter: iterator function. Should be either mtd_ooblayout_free or
  *	  mtd_ooblayout_ecc depending on the region type you're searching for
  *
- * This functions returns the section id and oobregion information of a
+ * This function returns the section id and oobregion information of a
  * specific byte. For example, say you want to know where the 4th ECC byte is
  * stored, you'll use:
  *
@@ -1775,13 +1773,18 @@ static struct backing_dev_info * __init mtd_bdi_init(char *name)
 	struct backing_dev_info *bdi;
 	int ret;
 
-	bdi = kzalloc(sizeof(*bdi), GFP_KERNEL);
+	bdi = bdi_alloc(GFP_KERNEL);
 	if (!bdi)
 		return ERR_PTR(-ENOMEM);
 
-	ret = bdi_setup_and_register(bdi, name);
+	bdi->name = name;
+	/*
+	 * We put '-0' suffix to the name to get the same name format as we
+	 * used to get. Since this is called only once, we get a unique name. 
+	 */
+	ret = bdi_register(bdi, "%.28s-0", name);
 	if (ret)
-		kfree(bdi);
+		bdi_put(bdi);
 
 	return ret ? ERR_PTR(ret) : bdi;
 }
@@ -1813,8 +1816,7 @@ static int __init init_mtd(void)
 out_procfs:
 	if (proc_mtd)
 		remove_proc_entry("mtd", NULL);
-	bdi_destroy(mtd_bdi);
-	kfree(mtd_bdi);
+	bdi_put(mtd_bdi);
 err_bdi:
 	class_unregister(&mtd_class);
 err_reg:
@@ -1828,8 +1830,7 @@ static void __exit cleanup_mtd(void)
 	if (proc_mtd)
 		remove_proc_entry("mtd", NULL);
 	class_unregister(&mtd_class);
-	bdi_destroy(mtd_bdi);
-	kfree(mtd_bdi);
+	bdi_put(mtd_bdi);
 	idr_destroy(&mtd_idr);
 }
 

@@ -14,10 +14,6 @@
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/module.h>
@@ -635,7 +631,7 @@ static int tm6000_prepare_isoc(struct tm6000_core *dev)
 		urb = usb_alloc_urb(max_packets, GFP_KERNEL);
 		if (!urb) {
 			tm6000_uninit_isoc(dev);
-			usb_free_urb(urb);
+			tm6000_free_urb_buffers(dev);
 			return -ENOMEM;
 		}
 		dev->isoc_ctl.urb[i] = urb;
@@ -1375,8 +1371,11 @@ static int __tm6000_open(struct file *file)
 
 	/* initialize hardware on analog mode */
 	rc = tm6000_init_analog_mode(dev);
-	if (rc < 0)
+	if (rc < 0) {
+		v4l2_fh_exit(&fh->fh);
+		kfree(fh);
 		return rc;
+	}
 
 	dev->mode = TM6000_MODE_ANALOG;
 

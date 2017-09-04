@@ -322,6 +322,7 @@
 #define IOMMU_PTE_IW (1ULL << 62)
 
 #define DTE_FLAG_IOTLB	(1ULL << 32)
+#define DTE_FLAG_SA	(1ULL << 34)
 #define DTE_FLAG_GV	(1ULL << 55)
 #define DTE_FLAG_MASK	(0x3ffULL << 32)
 #define DTE_GLX_SHIFT	(56)
@@ -343,7 +344,7 @@
 
 #define IOMMU_PAGE_MASK (((1ULL << 52) - 1) & ~0xfffULL)
 #define IOMMU_PTE_PRESENT(pte) ((pte) & IOMMU_PTE_P)
-#define IOMMU_PTE_PAGE(pte) (phys_to_virt((pte) & IOMMU_PAGE_MASK))
+#define IOMMU_PTE_PAGE(pte) (iommu_phys_to_virt((pte) & IOMMU_PAGE_MASK))
 #define IOMMU_PTE_MODE(pte) (((pte) >> 9) & 0x07)
 
 #define IOMMU_PROT_MASK 0x03
@@ -516,6 +517,8 @@ struct amd_iommu {
 
 	/* command buffer virtual address */
 	u8 *cmd_buf;
+	u32 cmd_buf_head;
+	u32 cmd_buf_tail;
 
 	/* event buffer virtual address */
 	u8 *evt_buf;
@@ -535,8 +538,8 @@ struct amd_iommu {
 	/* if one, we need to send a completion wait command */
 	bool need_sync;
 
-	/* IOMMU sysfs device */
-	struct device *iommu_dev;
+	/* Handle for IOMMU core code */
+	struct iommu_device iommu;
 
 	/*
 	 * We can't rely on the BIOS to restore all values on reinit, so we
@@ -568,6 +571,13 @@ struct amd_iommu {
 
 	volatile u64 __aligned(8) cmd_sem;
 };
+
+static inline struct amd_iommu *dev_to_amd_iommu(struct device *dev)
+{
+	struct iommu_device *iommu = dev_to_iommu_device(dev);
+
+	return container_of(iommu, struct amd_iommu, iommu);
+}
 
 #define ACPIHID_UID_LEN 256
 #define ACPIHID_HID_LEN 9
@@ -605,9 +615,6 @@ extern struct list_head amd_iommu_list;
  * The indices are referenced in the protection domains
  */
 extern struct amd_iommu *amd_iommus[MAX_IOMMUS];
-
-/* Number of IOMMUs present in the system */
-extern int amd_iommus_present;
 
 /*
  * Declarations for the global list of all protection domains

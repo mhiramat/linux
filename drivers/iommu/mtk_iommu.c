@@ -129,6 +129,7 @@ static void mtk_iommu_tlb_add_flush_nosync(unsigned long iova, size_t size,
 	writel_relaxed(iova, data->base + REG_MMU_INVLD_START_A);
 	writel_relaxed(iova + size - 1, data->base + REG_MMU_INVLD_END_A);
 	writel_relaxed(F_MMU_INV_RANGE, data->base + REG_MMU_INVALIDATE);
+	data->tlb_flush_active = true;
 }
 
 static void mtk_iommu_tlb_sync(void *cookie)
@@ -136,6 +137,10 @@ static void mtk_iommu_tlb_sync(void *cookie)
 	struct mtk_iommu_data *data = cookie;
 	int ret;
 	u32 tmp;
+
+	/* Avoid timing out if there's nothing to wait for */
+	if (!data->tlb_flush_active)
+		return;
 
 	ret = readl_poll_timeout_atomic(data->base + REG_MMU_CPE_DONE, tmp,
 					tmp != 0, 10, 100000);
@@ -146,6 +151,7 @@ static void mtk_iommu_tlb_sync(void *cookie)
 	}
 	/* Clear the CPE status */
 	writel_relaxed(0, data->base + REG_MMU_CPE_DONE);
+	data->tlb_flush_active = false;
 }
 
 static const struct iommu_gather_ops mtk_iommu_gather_ops = {
@@ -360,10 +366,14 @@ static phys_addr_t mtk_iommu_iova_to_phys(struct iommu_domain *domain,
 
 static int mtk_iommu_add_device(struct device *dev)
 {
+	struct mtk_iommu_data *data;
 	struct iommu_group *group;
 
 	if (!dev->iommu_fwspec || dev->iommu_fwspec->ops != &mtk_iommu_ops)
 		return -ENODEV; /* Not a iommu client device */
+
+	data = dev->iommu_fwspec->iommu_priv;
+	iommu_device_link(&data->iommu, dev);
 
 	group = iommu_group_get_for_dev(dev);
 	if (IS_ERR(group))
@@ -375,8 +385,13 @@ static int mtk_iommu_add_device(struct device *dev)
 
 static void mtk_iommu_remove_device(struct device *dev)
 {
+	struct mtk_iommu_data *data;
+
 	if (!dev->iommu_fwspec || dev->iommu_fwspec->ops != &mtk_iommu_ops)
 		return;
+
+	data = dev->iommu_fwspec->iommu_priv;
+	iommu_device_unlink(&data->iommu, dev);
 
 	iommu_group_remove_device(dev);
 	iommu_fwspec_free(dev);
@@ -497,6 +512,7 @@ static int mtk_iommu_probe(struct platform_device *pdev)
 	struct mtk_iommu_data   *data;
 	struct device           *dev = &pdev->dev;
 	struct resource         *res;
+	resource_size_t		ioaddr;
 	struct component_match  *match = NULL;
 	void                    *protect;
 	int                     i, larb_nr, ret;
@@ -519,6 +535,7 @@ static int mtk_iommu_probe(struct platform_device *pdev)
 	data->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(data->base))
 		return PTR_ERR(data->base);
+	ioaddr = res->start;
 
 	data->irq = platform_get_irq(pdev, 0);
 	if (data->irq < 0)
@@ -567,6 +584,18 @@ static int mtk_iommu_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	ret = iommu_device_sysfs_add(&data->iommu, dev, NULL,
+				     "mtk-iommu.%pa", &ioaddr);
+	if (ret)
+		return ret;
+
+	iommu_device_set_ops(&data->iommu, &mtk_iommu_ops);
+	iommu_device_set_fwnode(&data->iommu, &pdev->dev.of_node->fwnode);
+
+	ret = iommu_device_register(&data->iommu);
+	if (ret)
+		return ret;
+
 	if (!iommu_present(&platform_bus_type))
 		bus_set_iommu(&platform_bus_type, &mtk_iommu_ops);
 
@@ -576,6 +605,9 @@ static int mtk_iommu_probe(struct platform_device *pdev)
 static int mtk_iommu_remove(struct platform_device *pdev)
 {
 	struct mtk_iommu_data *data = platform_get_drvdata(pdev);
+
+	iommu_device_sysfs_remove(&data->iommu);
+	iommu_device_unregister(&data->iommu);
 
 	if (iommu_present(&platform_bus_type))
 		bus_set_iommu(&platform_bus_type, NULL);
@@ -655,7 +687,6 @@ static int mtk_iommu_init_fn(struct device_node *np)
 		return ret;
 	}
 
-	of_iommu_set_ops(np, &mtk_iommu_ops);
 	return 0;
 }
 

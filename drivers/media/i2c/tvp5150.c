@@ -12,10 +12,11 @@
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
+#include <linux/of_graph.h>
 #include <media/v4l2-async.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-ctrls.h>
-#include <media/v4l2-of.h>
+#include <media/v4l2-fwnode.h>
 #include <media/v4l2-mc.h>
 
 #include "tvp5150_reg.h"
@@ -291,8 +292,12 @@ static void tvp5150_selmux(struct v4l2_subdev *sd)
 	tvp5150_write(sd, TVP5150_OP_MODE_CTL, opmode);
 	tvp5150_write(sd, TVP5150_VD_IN_SRC_SEL_1, input);
 
-	/* Svideo should enable YCrCb output and disable GPCL output
-	 * For Composite and TV, it should be the reverse
+	/*
+	 * Setup the FID/GLCO/VLK/HVLK and INTREQ/GPCL/VBLK output signals. For
+	 * S-Video we output the vertical lock (VLK) signal on FID/GLCO/VLK/HVLK
+	 * and set INTREQ/GPCL/VBLK to logic 0. For composite we output the
+	 * field indicator (FID) signal on FID/GLCO/VLK/HVLK and set
+	 * INTREQ/GPCL/VBLK to logic 1.
 	 */
 	val = tvp5150_read(sd, TVP5150_MISC_CTL);
 	if (val < 0) {
@@ -301,9 +306,9 @@ static void tvp5150_selmux(struct v4l2_subdev *sd)
 	}
 
 	if (decoder->input == TVP5150_SVIDEO)
-		val = (val & ~0x40) | 0x10;
+		val = (val & ~TVP5150_MISC_CTL_GPCL) | TVP5150_MISC_CTL_HVLK;
 	else
-		val = (val & ~0x10) | 0x40;
+		val = (val & ~TVP5150_MISC_CTL_HVLK) | TVP5150_MISC_CTL_GPCL;
 	tvp5150_write(sd, TVP5150_MISC_CTL, val);
 };
 
@@ -455,7 +460,12 @@ static const struct i2c_reg_value tvp5150_init_enable[] = {
 	},{	/* Automatic offset and AGC enabled */
 		TVP5150_ANAL_CHL_CTL, 0x15
 	},{	/* Activate YCrCb output 0x9 or 0xd ? */
-		TVP5150_MISC_CTL, 0x6f
+		TVP5150_MISC_CTL, TVP5150_MISC_CTL_GPCL |
+				  TVP5150_MISC_CTL_INTREQ_OE |
+				  TVP5150_MISC_CTL_YCBCR_OE |
+				  TVP5150_MISC_CTL_SYNC_OE |
+				  TVP5150_MISC_CTL_VBLANK |
+				  TVP5150_MISC_CTL_CLOCK_OE,
 	},{	/* Activates video std autodetection for all standards */
 		TVP5150_AUTOSW_MSK, 0x0
 	},{	/* Default format: 0x47. For 4:2:2: 0x40 */
@@ -649,7 +659,7 @@ static int tvp5150_set_vbi(struct v4l2_subdev *sd,
 	struct tvp5150 *decoder = to_tvp5150(sd);
 	v4l2_std_id std = decoder->norm;
 	u8 reg;
-	int pos=0;
+	int pos = 0;
 
 	if (std == V4L2_STD_ALL) {
 		dev_err(sd->dev, "VBI can't be configured without knowing number of lines\n");
@@ -659,33 +669,30 @@ static int tvp5150_set_vbi(struct v4l2_subdev *sd,
 		line += 3;
 	}
 
-	if (line<6||line>27)
+	if (line < 6 || line > 27)
 		return 0;
 
-	while (regs->reg != (u16)-1 ) {
+	while (regs->reg != (u16)-1) {
 		if ((type & regs->type.vbi_type) &&
-		    (line>=regs->type.ini_line) &&
-		    (line<=regs->type.end_line)) {
-			type=regs->type.vbi_type;
+		    (line >= regs->type.ini_line) &&
+		    (line <= regs->type.end_line))
 			break;
-		}
 
 		regs++;
 		pos++;
 	}
+
 	if (regs->reg == (u16)-1)
 		return 0;
 
-	type=pos | (flags & 0xf0);
-	reg=((line-6)<<1)+TVP5150_LINE_MODE_INI;
+	type = pos | (flags & 0xf0);
+	reg = ((line - 6) << 1) + TVP5150_LINE_MODE_INI;
 
-	if (fields&1) {
+	if (fields & 1)
 		tvp5150_write(sd, reg, type);
-	}
 
-	if (fields&2) {
-		tvp5150_write(sd, reg+1, type);
-	}
+	if (fields & 2)
+		tvp5150_write(sd, reg + 1, type);
 
 	return type;
 }
@@ -856,15 +863,13 @@ static int tvp5150_fill_fmt(struct v4l2_subdev *sd,
 	struct v4l2_mbus_framefmt *f;
 	struct tvp5150 *decoder = to_tvp5150(sd);
 
-	if (!format || format->pad)
+	if (!format || (format->pad != DEMOD_PAD_VID_OUT))
 		return -EINVAL;
 
 	f = &format->format;
 
-	tvp5150_reset(sd, 0);
-
 	f->width = decoder->rect.width;
-	f->height = decoder->rect.height / 2;
+	f->height = decoder->rect.height;
 
 	f->code = MEDIA_BUS_FMT_UYVY8_2X8;
 	f->field = V4L2_FIELD_ALTERNATE;
@@ -1051,21 +1056,27 @@ static const struct media_entity_operations tvp5150_sd_media_ops = {
 static int tvp5150_s_stream(struct v4l2_subdev *sd, int enable)
 {
 	struct tvp5150 *decoder = to_tvp5150(sd);
-	/* Output format: 8-bit ITU-R BT.656 with embedded syncs */
-	int val = 0x09;
+	int val;
 
-	/* Output format: 8-bit 4:2:2 YUV with discrete sync */
-	if (decoder->mbus_type == V4L2_MBUS_PARALLEL)
-		val = 0x0d;
+	/* Enable or disable the video output signals. */
+	val = tvp5150_read(sd, TVP5150_MISC_CTL);
+	if (val < 0)
+		return val;
 
-	/* Initializes TVP5150 to its default values */
-	/* # set PCLK (27MHz) */
-	tvp5150_write(sd, TVP5150_CONF_SHARED_PIN, 0x00);
+	val &= ~(TVP5150_MISC_CTL_YCBCR_OE | TVP5150_MISC_CTL_SYNC_OE |
+		 TVP5150_MISC_CTL_CLOCK_OE);
 
-	if (enable)
-		tvp5150_write(sd, TVP5150_MISC_CTL, val);
-	else
-		tvp5150_write(sd, TVP5150_MISC_CTL, 0x00);
+	if (enable) {
+		/*
+		 * Enable the YCbCr and clock outputs. In discrete sync mode
+		 * (non-BT.656) additionally enable the the sync outputs.
+		 */
+		val |= TVP5150_MISC_CTL_YCBCR_OE | TVP5150_MISC_CTL_CLOCK_OE;
+		if (decoder->mbus_type == V4L2_MBUS_PARALLEL)
+			val |= TVP5150_MISC_CTL_SYNC_OE;
+	}
+
+	tvp5150_write(sd, TVP5150_MISC_CTL, val);
 
 	return 0;
 }
@@ -1345,7 +1356,7 @@ static int tvp5150_init(struct i2c_client *c)
 
 static int tvp5150_parse_dt(struct tvp5150 *decoder, struct device_node *np)
 {
-	struct v4l2_of_endpoint bus_cfg;
+	struct v4l2_fwnode_endpoint bus_cfg;
 	struct device_node *ep;
 #ifdef CONFIG_MEDIA_CONTROLLER
 	struct device_node *connectors, *child;
@@ -1360,7 +1371,7 @@ static int tvp5150_parse_dt(struct tvp5150 *decoder, struct device_node *np)
 	if (!ep)
 		return -EINVAL;
 
-	ret = v4l2_of_parse_endpoint(ep, &bus_cfg);
+	ret = v4l2_fwnode_endpoint_parse(of_fwnode_handle(ep), &bus_cfg);
 	if (ret)
 		goto err;
 
@@ -1524,7 +1535,6 @@ static int tvp5150_probe(struct i2c_client *c,
 		res = core->hdl.error;
 		goto err;
 	}
-	v4l2_ctrl_handler_setup(&core->hdl);
 
 	/* Default is no cropping */
 	core->rect.top = 0;
@@ -1534,6 +1544,8 @@ static int tvp5150_probe(struct i2c_client *c,
 		core->rect.height = TVP5150_V_MAX_OTHERS;
 	core->rect.left = 0;
 	core->rect.width = TVP5150_H_MAX;
+
+	tvp5150_reset(sd, 0);	/* Calls v4l2_ctrl_handler_setup() */
 
 	res = v4l2_async_register_subdev(sd);
 	if (res < 0)

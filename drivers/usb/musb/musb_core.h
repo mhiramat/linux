@@ -172,6 +172,9 @@ struct musb_io;
  */
 struct musb_platform_ops {
 
+#define MUSB_G_NO_SKB_RESERVE	BIT(9)
+#define MUSB_DA8XX		BIT(8)
+#define MUSB_PRESERVE_SESSION	BIT(7)
 #define MUSB_DMA_UX500		BIT(6)
 #define MUSB_DMA_CPPI41		BIT(5)
 #define MUSB_DMA_CPPI		BIT(4)
@@ -410,7 +413,6 @@ struct musb {
 
 	/* is_suspended means USB B_PERIPHERAL suspend */
 	unsigned		is_suspended:1;
-	unsigned		need_finish_resume :1;
 
 	/* may_wakeup means remote wakeup is enabled */
 	unsigned		may_wakeup:1;

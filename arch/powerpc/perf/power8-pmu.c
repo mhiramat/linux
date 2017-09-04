@@ -48,43 +48,12 @@ static const unsigned int event_alternatives[][MAX_ALT] = {
 	{ PM_RUN_INST_CMPL_ALT,		PM_RUN_INST_CMPL },
 };
 
-/*
- * Scan the alternatives table for a match and return the
- * index into the alternatives table if found, else -1.
- */
-static int find_alternative(u64 event)
-{
-	int i, j;
-
-	for (i = 0; i < ARRAY_SIZE(event_alternatives); ++i) {
-		if (event < event_alternatives[i][0])
-			break;
-
-		for (j = 0; j < MAX_ALT && event_alternatives[i][j]; ++j)
-			if (event == event_alternatives[i][j])
-				return i;
-	}
-
-	return -1;
-}
-
 static int power8_get_alternatives(u64 event, unsigned int flags, u64 alt[])
 {
 	int i, j, num_alt = 0;
-	u64 alt_event;
 
-	alt[num_alt++] = event;
-
-	i = find_alternative(event);
-	if (i >= 0) {
-		/* Filter out the original event, it's already in alt[0] */
-		for (j = 0; j < MAX_ALT; ++j) {
-			alt_event = event_alternatives[i][j];
-			if (alt_event && alt_event != event)
-				alt[num_alt++] = alt_event;
-		}
-	}
-
+	num_alt = isa207_get_alternatives(event, alt, event_alternatives,
+					(int)ARRAY_SIZE(event_alternatives));
 	if (flags & PPMU_ONLY_COUNT_RUN) {
 		/*
 		 * We're only counting in RUN state, so PM_CYC is equivalent to
@@ -121,6 +90,7 @@ GENERIC_EVENT_ATTR(branch-instructions,		PM_BRU_FIN);
 GENERIC_EVENT_ATTR(branch-misses,		PM_BR_MPRED_CMPL);
 GENERIC_EVENT_ATTR(cache-references,		PM_LD_REF_L1);
 GENERIC_EVENT_ATTR(cache-misses,		PM_LD_MISS_L1);
+GENERIC_EVENT_ATTR(mem_access,			MEM_ACCESS);
 
 CACHE_EVENT_ATTR(L1-dcache-load-misses,		PM_LD_MISS_L1);
 CACHE_EVENT_ATTR(L1-dcache-loads,		PM_LD_REF_L1);
@@ -151,6 +121,7 @@ static struct attribute *power8_events_attr[] = {
 	GENERIC_EVENT_PTR(PM_BR_MPRED_CMPL),
 	GENERIC_EVENT_PTR(PM_LD_REF_L1),
 	GENERIC_EVENT_PTR(PM_LD_MISS_L1),
+	GENERIC_EVENT_PTR(MEM_ACCESS),
 
 	CACHE_EVENT_PTR(PM_LD_MISS_L1),
 	CACHE_EVENT_PTR(PM_LD_REF_L1),
@@ -356,6 +327,8 @@ static struct power_pmu power8_pmu = {
 	.bhrb_filter_map	= power8_bhrb_filter_map,
 	.get_constraint		= isa207_get_constraint,
 	.get_alternatives	= power8_get_alternatives,
+	.get_mem_data_src	= isa207_get_mem_data_src,
+	.get_mem_weight		= isa207_get_mem_weight,
 	.disable_pmc		= isa207_disable_pmc,
 	.flags			= PPMU_HAS_SIER | PPMU_ARCH_207S,
 	.n_generic		= ARRAY_SIZE(power8_generic_events),

@@ -27,7 +27,7 @@
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/kernel_stat.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/err.h>
@@ -54,16 +54,7 @@
 #include "ap_debug.h"
 
 /*
- * Module description.
- */
-MODULE_AUTHOR("IBM Corporation");
-MODULE_DESCRIPTION("Adjunct Processor Bus driver, " \
-		   "Copyright IBM Corp. 2006, 2012");
-MODULE_LICENSE("GPL");
-MODULE_ALIAS_CRYPTO("z90crypt");
-
-/*
- * Module parameter
+ * Module parameters; note though this file itself isn't modular.
  */
 int ap_domain_index = -1;	/* Adjunct Processor Domain Index */
 static DEFINE_SPINLOCK(ap_domain_lock);
@@ -86,7 +77,6 @@ static bool initialised;
 /*
  * AP bus related debug feature things.
  */
-static struct dentry *ap_dbf_root;
 debug_info_t *ap_dbf_info;
 
 /*
@@ -678,10 +668,28 @@ static int ap_device_probe(struct device *dev)
 	struct ap_driver *ap_drv = to_ap_drv(dev->driver);
 	int rc;
 
+	/* Add queue/card to list of active queues/cards */
+	spin_lock_bh(&ap_list_lock);
+	if (is_card_dev(dev))
+		list_add(&to_ap_card(dev)->list, &ap_card_list);
+	else
+		list_add(&to_ap_queue(dev)->list,
+			 &to_ap_queue(dev)->card->queues);
+	spin_unlock_bh(&ap_list_lock);
+
 	ap_dev->drv = ap_drv;
 	rc = ap_drv->probe ? ap_drv->probe(ap_dev) : -ENODEV;
-	if (rc)
+
+	if (rc) {
+		spin_lock_bh(&ap_list_lock);
+		if (is_card_dev(dev))
+			list_del_init(&to_ap_card(dev)->list);
+		else
+			list_del_init(&to_ap_queue(dev)->list);
+		spin_unlock_bh(&ap_list_lock);
 		ap_dev->drv = NULL;
+	}
+
 	return rc;
 }
 
@@ -690,14 +698,17 @@ static int ap_device_remove(struct device *dev)
 	struct ap_device *ap_dev = to_ap_dev(dev);
 	struct ap_driver *ap_drv = ap_dev->drv;
 
+	if (ap_drv->remove)
+		ap_drv->remove(ap_dev);
+
+	/* Remove queue/card from list of active queues/cards */
 	spin_lock_bh(&ap_list_lock);
 	if (is_card_dev(dev))
 		list_del_init(&to_ap_card(dev)->list);
 	else
 		list_del_init(&to_ap_queue(dev)->list);
 	spin_unlock_bh(&ap_list_lock);
-	if (ap_drv->remove)
-		ap_drv->remove(ap_dev);
+
 	return 0;
 }
 
@@ -755,7 +766,7 @@ static ssize_t ap_domain_store(struct bus_type *bus,
 	ap_domain_index = domain;
 	spin_unlock_bh(&ap_domain_lock);
 
-	AP_DBF(DBF_DEBUG, "store new default domain=%d\n", domain);
+	AP_DBF(DBF_DEBUG, "stored new default domain=%d\n", domain);
 
 	return count;
 }
@@ -941,6 +952,7 @@ static int ap_select_domain(void)
 	}
 	if (best_domain >= 0){
 		ap_domain_index = best_domain;
+		AP_DBF(DBF_DEBUG, "new ap_domain_index=%d\n", ap_domain_index);
 		spin_unlock_bh(&ap_domain_lock);
 		return 0;
 	}
@@ -977,7 +989,7 @@ static void ap_scan_bus(struct work_struct *unused)
 	ap_qid_t qid;
 	int depth = 0, type = 0;
 	unsigned int functions = 0;
-	int rc, id, dom, borked, domains;
+	int rc, id, dom, borked, domains, defdomdevs = 0;
 
 	AP_DBF(DBF_DEBUG, "ap_scan_bus running\n");
 
@@ -1041,6 +1053,8 @@ static void ap_scan_bus(struct work_struct *unused)
 				put_device(dev);
 				if (!borked) {
 					domains++;
+					if (dom == ap_domain_index)
+						defdomdevs++;
 					continue;
 				}
 			}
@@ -1066,10 +1080,6 @@ static void ap_scan_bus(struct work_struct *unused)
 				}
 				/* get it and thus adjust reference counter */
 				get_device(&ac->ap_dev.device);
-				/* Add card device to card list */
-				spin_lock_bh(&ap_list_lock);
-				list_add(&ac->list, &ap_card_list);
-				spin_unlock_bh(&ap_list_lock);
 			}
 			/* now create the new queue device */
 			aq = ap_queue_create(qid, type);
@@ -1080,10 +1090,6 @@ static void ap_scan_bus(struct work_struct *unused)
 			aq->ap_dev.device.parent = &ac->ap_dev.device;
 			dev_set_name(&aq->ap_dev.device,
 				     "%02x.%04x", id, dom);
-			/* Add queue device to card queue list */
-			spin_lock_bh(&ap_list_lock);
-			list_add(&aq->list, &ac->queues);
-			spin_unlock_bh(&ap_list_lock);
 			/* Start with a device reset */
 			spin_lock_bh(&aq->lock);
 			ap_wait(ap_sm_event(aq, AP_EVENT_POLL));
@@ -1091,13 +1097,12 @@ static void ap_scan_bus(struct work_struct *unused)
 			/* Register device */
 			rc = device_register(&aq->ap_dev.device);
 			if (rc) {
-				spin_lock_bh(&ap_list_lock);
-				list_del_init(&aq->list);
-				spin_unlock_bh(&ap_list_lock);
 				put_device(&aq->ap_dev.device);
 				continue;
 			}
 			domains++;
+			if (dom == ap_domain_index)
+				defdomdevs++;
 		} /* end domain loop */
 		if (ac) {
 			/* remove card dev if there are no queue devices */
@@ -1106,6 +1111,11 @@ static void ap_scan_bus(struct work_struct *unused)
 			put_device(&ac->ap_dev.device);
 		}
 	} /* end device loop */
+
+	if (defdomdevs < 1)
+		AP_DBF(DBF_INFO, "no queue device with default domain %d available\n",
+		       ap_domain_index);
+
 out:
 	mod_timer(&ap_config_timer, jiffies + ap_config_time * HZ);
 }
@@ -1115,16 +1125,6 @@ static void ap_config_timeout(unsigned long ptr)
 	if (ap_suspend_flag)
 		return;
 	queue_work(system_long_wq, &ap_scan_work);
-}
-
-static void ap_reset_domain(void)
-{
-	int i;
-
-	if (ap_domain_index == -1 || !ap_test_config_domain(ap_domain_index))
-		return;
-	for (i = 0; i < AP_DEVICES; i++)
-		ap_rapq(AP_MKQID(i, ap_domain_index));
 }
 
 static void ap_reset_all(void)
@@ -1148,7 +1148,6 @@ static struct reset_call ap_reset_call = {
 
 int __init ap_debug_init(void)
 {
-	ap_dbf_root = debugfs_create_dir("ap", NULL);
 	ap_dbf_info = debug_register("ap", 1, 1,
 				     DBF_MAX_SPRINTF_ARGS * sizeof(long));
 	debug_register_view(ap_dbf_info, &debug_sprintf_view);
@@ -1159,7 +1158,6 @@ int __init ap_debug_init(void)
 
 void ap_debug_exit(void)
 {
-	debugfs_remove(ap_dbf_root);
 	debug_unregister(ap_dbf_info);
 }
 
@@ -1186,14 +1184,14 @@ int __init ap_module_init(void)
 	ap_init_configuration();
 
 	if (ap_configuration)
-		max_domain_id = ap_max_domain_id ? : (AP_DOMAINS - 1);
+		max_domain_id =
+			ap_max_domain_id ? ap_max_domain_id : AP_DOMAINS - 1;
 	else
 		max_domain_id = 15;
 	if (ap_domain_index < -1 || ap_domain_index > max_domain_id) {
 		pr_warn("%d is not a valid cryptographic domain\n",
 			ap_domain_index);
-		rc = -EINVAL;
-		goto out_free;
+		ap_domain_index = -1;
 	}
 	/* In resume callback we need to know if the user had set the domain.
 	 * If so, we can not just reset it.
@@ -1266,47 +1264,7 @@ out:
 	unregister_reset_call(&ap_reset_call);
 	if (ap_using_interrupts())
 		unregister_adapter_interrupt(&ap_airq);
-out_free:
 	kfree(ap_configuration);
 	return rc;
 }
-
-/**
- * ap_modules_exit(): The module termination code
- *
- * Terminates the module.
- */
-void ap_module_exit(void)
-{
-	int i;
-
-	initialised = false;
-	ap_reset_domain();
-	ap_poll_thread_stop();
-	del_timer_sync(&ap_config_timer);
-	hrtimer_cancel(&ap_poll_timer);
-	tasklet_kill(&ap_tasklet);
-
-	/* first remove queue devices */
-	bus_for_each_dev(&ap_bus_type, NULL, NULL,
-			 __ap_queue_devices_unregister);
-	/* now remove the card devices */
-	bus_for_each_dev(&ap_bus_type, NULL, NULL,
-			 __ap_card_devices_unregister);
-
-	/* remove bus attributes */
-	for (i = 0; ap_bus_attrs[i]; i++)
-		bus_remove_file(&ap_bus_type, ap_bus_attrs[i]);
-	unregister_pm_notifier(&ap_power_notifier);
-	root_device_unregister(ap_root_device);
-	bus_unregister(&ap_bus_type);
-	kfree(ap_configuration);
-	unregister_reset_call(&ap_reset_call);
-	if (ap_using_interrupts())
-		unregister_adapter_interrupt(&ap_airq);
-
-	ap_debug_exit();
-}
-
-module_init(ap_module_init);
-module_exit(ap_module_exit);
+device_initcall(ap_module_init);

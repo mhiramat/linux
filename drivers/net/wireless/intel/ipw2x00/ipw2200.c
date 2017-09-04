@@ -1195,12 +1195,12 @@ static void ipw_led_shutdown(struct ipw_priv *priv)
  *
  * See the level definitions in ipw for details.
  */
-static ssize_t show_debug_level(struct device_driver *d, char *buf)
+static ssize_t debug_level_show(struct device_driver *d, char *buf)
 {
 	return sprintf(buf, "0x%08X\n", ipw_debug_level);
 }
 
-static ssize_t store_debug_level(struct device_driver *d, const char *buf,
+static ssize_t debug_level_store(struct device_driver *d, const char *buf,
 				 size_t count)
 {
 	char *p = (char *)buf;
@@ -1221,9 +1221,7 @@ static ssize_t store_debug_level(struct device_driver *d, const char *buf,
 
 	return strnlen(buf, count);
 }
-
-static DRIVER_ATTR(debug_level, S_IWUSR | S_IRUGO,
-		   show_debug_level, store_debug_level);
+static DRIVER_ATTR_RW(debug_level);
 
 static inline u32 ipw_get_event_log_len(struct ipw_priv *priv)
 {
@@ -3539,9 +3537,6 @@ static int ipw_load(struct ipw_priv *priv)
 	fw_img = &fw->data[le32_to_cpu(fw->boot_size) +
 			   le32_to_cpu(fw->ucode_size)];
 
-	if (rc < 0)
-		goto error;
-
 	if (!priv->rxq)
 		priv->rxq = ipw_rx_queue_alloc(priv);
 	else
@@ -3974,7 +3969,7 @@ static void ipw_send_disassociate(struct ipw_priv *priv, int quiet)
 		return;
 	}
 
-	IPW_DEBUG_ASSOC("Disassocation attempt from %pM "
+	IPW_DEBUG_ASSOC("Disassociation attempt from %pM "
 			"on channel %d.\n",
 			priv->assoc_request.bssid,
 			priv->assoc_request.channel);
@@ -5196,7 +5191,7 @@ static void ipw_rx_queue_restock(struct ipw_priv *priv)
  * Move all used packet from rx_used to rx_free, allocating a new SKB for each.
  * Also restock the Rx queue via ipw_rx_queue_restock.
  *
- * This is called as a scheduled work item (except for during intialization)
+ * This is called as a scheduled work item (except for during initialization)
  */
 static void ipw_rx_queue_replenish(void *data)
 {
@@ -10277,8 +10272,9 @@ static int ipw_tx_skb(struct ipw_priv *priv, struct libipw_txb *txb,
 
 				printk(KERN_INFO "Adding frag %d %d...\n",
 				       j, size);
-				memcpy(skb_put(skb, size),
-				       txb->fragments[j]->data + hdr_len, size);
+				skb_put_data(skb,
+					     txb->fragments[j]->data + hdr_len,
+					     size);
 			}
 			dev_kfree_skb_any(txb->fragments[i]);
 			txb->fragments[i] = skb;
@@ -10373,7 +10369,7 @@ static void ipw_handle_promiscuous_tx(struct ipw_priv *priv,
 		if (!dst)
 			continue;
 
-		rt_hdr = (void *)skb_put(dst, sizeof(*rt_hdr));
+		rt_hdr = skb_put(dst, sizeof(*rt_hdr));
 
 		rt_hdr->it_version = PKTHDR_RADIOTAP_VERSION;
 		rt_hdr->it_pad = 0;

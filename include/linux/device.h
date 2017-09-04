@@ -66,7 +66,6 @@ extern void bus_remove_file(struct bus_type *, struct bus_attribute *);
  * @name:	The name of the bus.
  * @dev_name:	Used for subsystems to enumerate devices like ("foo%u", dev->id).
  * @dev_root:	Default device to use as the parent.
- * @dev_attrs:	Default attributes of the devices on the bus.
  * @bus_groups:	Default attributes of the bus.
  * @dev_groups:	Default attributes of the devices on the bus.
  * @drv_groups: Default attributes of the device drivers on the bus.
@@ -88,6 +87,8 @@ extern void bus_remove_file(struct bus_type *, struct bus_attribute *);
  *
  * @suspend:	Called when a device on this bus wants to go to sleep mode.
  * @resume:	Called to bring a device on this bus out of sleep mode.
+ * @num_vf:	Called to find out how many virtual functions a device on this
+ *		bus supports.
  * @pm:		Power management operations of this bus, callback the specific
  *		device driver's pm-ops.
  * @iommu_ops:  IOMMU specific operations for this bus, used to attach IOMMU
@@ -110,7 +111,6 @@ struct bus_type {
 	const char		*name;
 	const char		*dev_name;
 	struct device		*dev_root;
-	struct device_attribute	*dev_attrs;	/* use dev_groups instead */
 	const struct attribute_group **bus_groups;
 	const struct attribute_group **dev_groups;
 	const struct attribute_group **drv_groups;
@@ -126,6 +126,8 @@ struct bus_type {
 
 	int (*suspend)(struct device *dev, pm_message_t state);
 	int (*resume)(struct device *dev);
+
+	int (*num_vf)(struct device *dev);
 
 	const struct dev_pm_ops *pm;
 
@@ -361,7 +363,6 @@ int subsys_virtual_register(struct bus_type *subsys,
  * struct class - device classes
  * @name:	Name of the class.
  * @owner:	The module owner.
- * @class_attrs: Default attributes of this class.
  * @class_groups: Default attributes of this class.
  * @dev_groups:	Default attributes of the devices that belong to the class.
  * @dev_kobj:	The kobject that represents this class and links it into the hierarchy.
@@ -374,6 +375,7 @@ int subsys_virtual_register(struct bus_type *subsys,
  * @suspend:	Used to put the device to sleep mode, usually to a low power
  *		state.
  * @resume:	Used to bring the device from the sleep mode.
+ * @shutdown:	Called at shut-down time to quiesce the device.
  * @ns_type:	Callbacks so sysfs can detemine namespaces.
  * @namespace:	Namespace of the device belongs to this class.
  * @pm:		The default device power management operations of this class.
@@ -390,7 +392,6 @@ struct class {
 	const char		*name;
 	struct module		*owner;
 
-	struct class_attribute		*class_attrs;
 	const struct attribute_group	**class_groups;
 	const struct attribute_group	**dev_groups;
 	struct kobject			*dev_kobj;
@@ -403,6 +404,7 @@ struct class {
 
 	int (*suspend)(struct device *dev, pm_message_t state);
 	int (*resume)(struct device *dev);
+	int (*shutdown)(struct device *dev);
 
 	const struct kobj_ns_type_operations *ns_type;
 	const void *(*namespace)(struct device *dev);
@@ -461,8 +463,6 @@ struct class_attribute {
 			const char *buf, size_t count);
 };
 
-#define CLASS_ATTR(_name, _mode, _show, _store) \
-	struct class_attribute class_attr_##_name = __ATTR(_name, _mode, _show, _store)
 #define CLASS_ATTR_RW(_name) \
 	struct class_attribute class_attr_##_name = __ATTR_RW(_name)
 #define CLASS_ATTR_RO(_name) \
@@ -843,7 +843,7 @@ struct dev_links_info {
  * 		hibernation, system resume and during runtime PM transitions
  * 		along with subsystem-level and driver-level callbacks.
  * @pins:	For device pin management.
- *		See Documentation/pinctrl.txt for details.
+ *		See Documentation/driver-api/pinctl.rst for details.
  * @msi_list:	Hosts MSI descriptors
  * @msi_domain: The generic MSI domain this device is using.
  * @numa_node:	NUMA node this device is close to.
@@ -875,6 +875,8 @@ struct dev_links_info {
  *
  * @offline_disabled: If set, the device is permanently online.
  * @offline:	Set after successful invocation of bus type's .offline().
+ * @of_node_reused: Set if the device-tree node is shared with an ancestor
+ *              device.
  *
  * At the lowest level, every device in a Linux system is represented by an
  * instance of struct device. The device structure contains the information
@@ -921,6 +923,7 @@ struct device {
 #ifdef CONFIG_NUMA
 	int		numa_node;	/* NUMA node this device is close to */
 #endif
+	const struct dma_map_ops *dma_ops;
 	u64		*dma_mask;	/* dma mask (if dma'able device) */
 	u64		coherent_dma_mask;/* Like dma_mask, but for
 					     alloc_coherent mappings as
@@ -961,6 +964,7 @@ struct device {
 
 	bool			offline_disabled:1;
 	bool			offline:1;
+	bool			of_node_reused:1;
 };
 
 static inline struct device *kobj_to_dev(struct kobject *kobj)
@@ -1139,6 +1143,14 @@ extern int device_offline(struct device *dev);
 extern int device_online(struct device *dev);
 extern void set_primary_fwnode(struct device *dev, struct fwnode_handle *fwnode);
 extern void set_secondary_fwnode(struct device *dev, struct fwnode_handle *fwnode);
+void device_set_of_node_from_dev(struct device *dev, const struct device *dev2);
+
+static inline int dev_num_vf(struct device *dev)
+{
+	if (dev->bus && dev->bus->num_vf)
+		return dev->bus->num_vf(dev);
+	return 0;
+}
 
 /*
  * Root device objects for grouping under /sys/devices

@@ -12,10 +12,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
  */
 
 #include <linux/i2c.h>
@@ -492,7 +488,7 @@ static int pvr2_i2c_xfer(struct i2c_adapter *i2c_adap,
 			if ((ret > 0) || !(msgs[idx].flags & I2C_M_RD)) {
 				if (cnt > 8) cnt = 8;
 				printk(KERN_CONT " [");
-				for (offs = 0; offs < (cnt>8?8:cnt); offs++) {
+				for (offs = 0; offs < cnt; offs++) {
 					if (offs) printk(KERN_CONT " ");
 					printk(KERN_CONT "%02x",msgs[idx].buf[offs]);
 				}

@@ -23,7 +23,7 @@
 
 #include <linux/spinlock.h>
 #include <linux/errno.h>
-#include <linux/sched.h>
+#include <linux/sched/mm.h>
 #include <linux/proc_fs.h>
 #include <linux/stat.h>
 #include <linux/sysctl.h>
@@ -36,6 +36,7 @@
 #include <linux/context_tracking.h>
 #include <linux/libfdt.h>
 
+#include <asm/debugfs.h>
 #include <asm/processor.h>
 #include <asm/pgtable.h>
 #include <asm/mmu.h>
@@ -747,6 +748,35 @@ static unsigned long __init htab_get_table_size(void)
 }
 
 #ifdef CONFIG_MEMORY_HOTPLUG
+void resize_hpt_for_hotplug(unsigned long new_mem_size)
+{
+	unsigned target_hpt_shift;
+
+	if (!mmu_hash_ops.resize_hpt)
+		return;
+
+	target_hpt_shift = htab_shift_for_mem_size(new_mem_size);
+
+	/*
+	 * To avoid lots of HPT resizes if memory size is fluctuating
+	 * across a boundary, we deliberately have some hysterisis
+	 * here: we immediately increase the HPT size if the target
+	 * shift exceeds the current shift, but we won't attempt to
+	 * reduce unless the target shift is at least 2 below the
+	 * current shift
+	 */
+	if ((target_hpt_shift > ppc64_pft_size)
+	    || (target_hpt_shift < (ppc64_pft_size - 1))) {
+		int rc;
+
+		rc = mmu_hash_ops.resize_hpt(target_hpt_shift);
+		if (rc)
+			printk(KERN_WARNING
+			       "Unable to resize hash page table to target order %d: %d\n",
+			       target_hpt_shift, rc);
+	}
+}
+
 int hash__create_section_mapping(unsigned long start, unsigned long end)
 {
 	int rc = htab_bolt_mapping(start, end, __pa(start),
@@ -780,6 +810,8 @@ static void update_hid_for_hash(void)
 	asm volatile(PPC_TLBIE_5(%0, %4, %3, %2, %1)
 		     : : "r"(rb), "i"(0), "i"(0), "i"(2), "r"(0) : "memory");
 	asm volatile("eieio; tlbsync; ptesync; isync; slbia": : :"memory");
+	trace_tlbie(0, 0, rb, 0, 2, 0, 0);
+
 	/*
 	 * now switch the HID
 	 */
@@ -896,11 +928,6 @@ static void __init htab_initialize(void)
 	}
 #endif /* CONFIG_DEBUG_PAGEALLOC */
 
-	/* On U3 based machines, we need to reserve the DART area and
-	 * _NOT_ map it to avoid cache paradoxes as it's remapped non
-	 * cacheable later on
-	 */
-
 	/* create bolted the linear mapping in the hash table */
 	for_each_memblock(memory, reg) {
 		base = (unsigned long)__va(reg->base);
@@ -950,6 +977,19 @@ void __init hash__early_init_devtree(void)
 
 void __init hash__early_init_mmu(void)
 {
+	/*
+	 * We have code in __hash_page_64K() and elsewhere, which assumes it can
+	 * do the following:
+	 *   new_pte |= (slot << H_PAGE_F_GIX_SHIFT) & (H_PAGE_F_SECOND | H_PAGE_F_GIX);
+	 *
+	 * Where the slot number is between 0-15, and values of 8-15 indicate
+	 * the secondary bucket. For that code to work H_PAGE_F_SECOND and
+	 * H_PAGE_F_GIX must occupy four contiguous bits in the PTE, and
+	 * H_PAGE_F_SECOND must be placed above H_PAGE_F_GIX. Assert that here
+	 * with a BUILD_BUG_ON().
+	 */
+	BUILD_BUG_ON(H_PAGE_F_SECOND != (1ul  << (H_PAGE_F_GIX_SHIFT + 3)));
+
 	htab_init_page_sizes();
 
 	/*
@@ -1089,7 +1129,7 @@ void demote_segment_4k(struct mm_struct *mm, unsigned long addr)
 	copro_flush_all_slbs(mm);
 	if ((get_paca_psize(addr) != MMU_PAGE_4K) && (current->mm == mm)) {
 
-		copy_mm_to_paca(&mm->context);
+		copy_mm_to_paca(mm);
 		slb_flush_and_rebolt();
 	}
 }
@@ -1161,7 +1201,7 @@ static void check_paca_psize(unsigned long ea, struct mm_struct *mm,
 {
 	if (user_region) {
 		if (psize != get_paca_psize(ea)) {
-			copy_mm_to_paca(&mm->context);
+			copy_mm_to_paca(mm);
 			slb_flush_and_rebolt();
 		}
 	} else if (get_paca()->vmalloc_sllp !=
@@ -1795,3 +1835,33 @@ void hash__setup_initial_memory_limit(phys_addr_t first_memblock_base,
 	/* Finally limit subsequent allocations */
 	memblock_set_current_limit(ppc64_rma_size);
 }
+
+#ifdef CONFIG_DEBUG_FS
+
+static int hpt_order_get(void *data, u64 *val)
+{
+	*val = ppc64_pft_size;
+	return 0;
+}
+
+static int hpt_order_set(void *data, u64 val)
+{
+	if (!mmu_hash_ops.resize_hpt)
+		return -ENODEV;
+
+	return mmu_hash_ops.resize_hpt(val);
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(fops_hpt_order, hpt_order_get, hpt_order_set, "%llu\n");
+
+static int __init hash64_debugfs(void)
+{
+	if (!debugfs_create_file("hpt_order", 0600, powerpc_debugfs_root,
+				 NULL, &fops_hpt_order)) {
+		pr_err("lpar: unable to create hpt_order debugsfs file\n");
+	}
+
+	return 0;
+}
+machine_device_initcall(pseries, hash64_debugfs);
+#endif /* CONFIG_DEBUG_FS */

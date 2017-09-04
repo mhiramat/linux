@@ -213,28 +213,14 @@ int lmv_revalidate_slaves(struct obd_export *exp,
 		lockh = (struct lustre_handle *)&it.it_lock_handle;
 		if (rc > 0 && !req) {
 			/* slave inode is still valid */
-			CDEBUG(D_INODE, "slave "DFID" is still valid.\n",
+			CDEBUG(D_INODE, "slave " DFID " is still valid.\n",
 			       PFID(&fid));
 			rc = 0;
 		} else {
 			/* refresh slave from server */
 			body = req_capsule_server_get(&req->rq_pill,
 						      &RMF_MDT_BODY);
-			LASSERT(body);
-
-			if (unlikely(body->mbo_nlink < 2)) {
-				/*
-				 * If this is bad stripe, most likely due
-				 * to the race between close(unlink) and
-				 * getattr, let's return -EONENT, so llite
-				 * will revalidate the dentry see
-				 * ll_inode_revalidate_fini()
-				 */
-				CDEBUG(D_INODE, "%s: nlink %d < 2 corrupt stripe %d "DFID":" DFID"\n",
-				       obd->obd_name, body->mbo_nlink, i,
-				       PFID(&lsm->lsm_md_oinfo[i].lmo_fid),
-				       PFID(&lsm->lsm_md_oinfo[0].lmo_fid));
-
+			if (!body) {
 				if (it.it_lock_mode && lockh) {
 					ldlm_lock_decref(lockh, it.it_lock_mode);
 					it.it_lock_mode = 0;
@@ -449,7 +435,7 @@ static int lmv_intent_lookup(struct obd_export *exp,
 			if (IS_ERR(tgt))
 				return PTR_ERR(tgt);
 
-			CDEBUG(D_INODE, "Try other stripes " DFID"\n",
+			CDEBUG(D_INODE, "Try other stripes " DFID "\n",
 			       PFID(&oinfo->lmo_fid));
 
 			op_data->op_fid1 = oinfo->lmo_fid;
@@ -493,7 +479,7 @@ int lmv_intent_lock(struct obd_export *exp, struct md_op_data *op_data,
 
 	LASSERT(fid_is_sane(&op_data->op_fid1));
 
-	CDEBUG(D_INODE, "INTENT LOCK '%s' for "DFID" '%*s' on "DFID"\n",
+	CDEBUG(D_INODE, "INTENT LOCK '%s' for " DFID " '%*s' on " DFID "\n",
 	       LL_IT2STR(it), PFID(&op_data->op_fid2),
 	       (int)op_data->op_namelen, op_data->op_name,
 	       PFID(&op_data->op_fid1));

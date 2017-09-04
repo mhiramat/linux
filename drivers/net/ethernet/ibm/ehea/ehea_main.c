@@ -328,8 +328,8 @@ out:
 	spin_unlock_irqrestore(&ehea_bcmc_regs.lock, flags);
 }
 
-static struct rtnl_link_stats64 *ehea_get_stats64(struct net_device *dev,
-					struct rtnl_link_stats64 *stats)
+static void ehea_get_stats64(struct net_device *dev,
+			     struct rtnl_link_stats64 *stats)
 {
 	struct ehea_port *port = netdev_priv(dev);
 	u64 rx_packets = 0, tx_packets = 0, rx_bytes = 0, tx_bytes = 0;
@@ -352,7 +352,6 @@ static struct rtnl_link_stats64 *ehea_get_stats64(struct net_device *dev,
 
 	stats->multicast = port->stats.multicast;
 	stats->rx_errors = port->stats.rx_errors;
-	return stats;
 }
 
 static void ehea_update_stats(struct work_struct *work)
@@ -3554,14 +3553,12 @@ static int check_module_parm(void)
 	return ret;
 }
 
-static ssize_t ehea_show_capabilities(struct device_driver *drv,
-				      char *buf)
+static ssize_t capabilities_show(struct device_driver *drv, char *buf)
 {
 	return sprintf(buf, "%d", EHEA_CAPABILITIES);
 }
 
-static DRIVER_ATTR(capabilities, S_IRUSR | S_IRGRP | S_IROTH,
-		   ehea_show_capabilities, NULL);
+static DRIVER_ATTR_RO(capabilities);
 
 static int __init ehea_module_init(void)
 {

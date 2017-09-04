@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/mutex.h>
 #include <linux/sched.h>
+#include <linux/sched/clock.h>
 #include <linux/notifier.h>
 #include <linux/pm_qos.h>
 #include <linux/cpu.h>
@@ -110,7 +111,8 @@ void cpuidle_use_deepest_state(bool enable)
 
 	preempt_disable();
 	dev = cpuidle_get_device();
-	dev->use_deepest_state = enable;
+	if (dev)
+		dev->use_deepest_state = enable;
 	preempt_enable();
 }
 
@@ -218,6 +220,7 @@ int cpuidle_enter_state(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 	entered_state = target_state->enter(dev, drv, index);
 	start_critical_timings();
 
+	sched_clock_idle_wakeup_event();
 	time_end = ns_to_ktime(local_clock());
 	trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, dev->cpu);
 

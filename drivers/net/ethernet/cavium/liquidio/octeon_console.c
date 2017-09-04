@@ -18,6 +18,7 @@
 /**
  * @file octeon_console.c
  */
+#include <linux/moduleparam.h>
 #include <linux/pci.h>
 #include <linux/netdevice.h>
 #include <linux/crc32.h>
@@ -549,6 +550,16 @@ int octeon_init_consoles(struct octeon_device *oct)
 		return ret;
 	}
 
+	/* Dedicate one of Octeon's BAR1 index registers to create a static
+	 * mapping to a region of Octeon DRAM that contains the PCI console
+	 * named block.
+	 */
+	oct->console_nb_info.bar1_index = BAR1_INDEX_STATIC_MAP;
+	oct->fn_list.bar1_idx_setup(oct, addr, oct->console_nb_info.bar1_index,
+				    true);
+	oct->console_nb_info.dram_region_base = addr
+		& ~(OCTEON_BAR1_ENTRY_SIZE - 1ULL);
+
 	/* num_consoles > 0, is an indication that the consoles
 	 * are accessible
 	 */
@@ -713,13 +724,11 @@ static int octeon_console_read(struct octeon_device *oct, u32 console_num,
 }
 
 #define FBUF_SIZE	(4 * 1024 * 1024)
-u8 fbuf[FBUF_SIZE];
 
 int octeon_download_firmware(struct octeon_device *oct, const u8 *data,
 			     size_t size)
 {
 	int ret = 0;
-	u8 *p = fbuf;
 	u32 crc32_result;
 	u64 load_addr;
 	u32 image_len;
@@ -794,10 +803,8 @@ int octeon_download_firmware(struct octeon_device *oct, const u8 *data,
 			else
 				size = FBUF_SIZE;
 
-			memcpy(p, data, size);
-
 			/* download the image */
-			octeon_pci_write_core_mem(oct, load_addr, p, (u32)size);
+			octeon_pci_write_core_mem(oct, load_addr, data, (u32)size);
 
 			data += size;
 			rem -= (u32)size;

@@ -1,6 +1,7 @@
 #ifndef _ASM_POWERPC_NOHASH_32_PGTABLE_H
 #define _ASM_POWERPC_NOHASH_32_PGTABLE_H
 
+#define __ARCH_USE_5LEVEL_HACK
 #include <asm-generic/pgtable-nopmd.h>
 
 #ifndef __ASSEMBLY__
@@ -338,6 +339,8 @@ static inline void __ptep_set_access_flags(struct mm_struct *mm,
 
 extern int get_pteptr(struct mm_struct *mm, unsigned long addr, pte_t **ptep,
 		      pmd_t **pmdp);
+
+int map_kernel_page(unsigned long va, phys_addr_t pa, int flags);
 
 #endif /* !__ASSEMBLY__ */
 

@@ -7,6 +7,7 @@
 #include <linux/perf_event.h>
 
 extern bool test_attr__enabled;
+void test_attr__ready(void);
 void test_attr__init(void);
 void test_attr__open(struct perf_event_attr *attr, pid_t pid, int cpu,
 		     int fd, int group_fd, unsigned long flags);
@@ -50,6 +51,7 @@ struct record_opts {
 	bool	     running_time;
 	bool	     full_auxtrace;
 	bool	     auxtrace_snapshot_mode;
+	bool	     record_namespaces;
 	bool	     record_switch_events;
 	bool	     all_kernel;
 	bool	     all_user;

@@ -16,8 +16,9 @@
 
 #include <linux/kernel_stat.h>
 #include <linux/errno.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/sched.h>
+#include <linux/sched/clock.h>
 #include <linux/kernel.h>
 #include <linux/param.h>
 #include <linux/string.h>
@@ -110,7 +111,7 @@ unsigned long long monotonic_clock(void)
 }
 EXPORT_SYMBOL(monotonic_clock);
 
-void tod_to_timeval(__u64 todval, struct timespec64 *xt)
+static void tod_to_timeval(__u64 todval, struct timespec64 *xt)
 {
 	unsigned long long sec;
 
@@ -120,7 +121,6 @@ void tod_to_timeval(__u64 todval, struct timespec64 *xt)
 	todval -= (sec * 1000000) << 12;
 	xt->tv_nsec = ((todval * 1000) >> 12);
 }
-EXPORT_SYMBOL(tod_to_timeval);
 
 void clock_comparator_work(void)
 {
@@ -158,7 +158,9 @@ void init_cpu_timer(void)
 	cd->mult		= 16777;
 	cd->shift		= 12;
 	cd->min_delta_ns	= 1;
+	cd->min_delta_ticks	= 1;
 	cd->max_delta_ns	= LONG_MAX;
+	cd->max_delta_ticks	= ULONG_MAX;
 	cd->rating		= 400;
 	cd->cpumask		= cpumask_of(cpu);
 	cd->set_next_event	= s390_next_event;
@@ -492,7 +494,7 @@ static void __init stp_reset(void)
 		pr_warn("The real or virtual hardware system does not provide an STP interface\n");
 		free_page((unsigned long) stp_page);
 		stp_page = NULL;
-		stp_online = 0;
+		stp_online = false;
 	}
 }
 
@@ -634,10 +636,10 @@ static void stp_work_fn(struct work_struct *work)
 		goto out_unlock;
 
 	memset(&stp_sync, 0, sizeof(stp_sync));
-	get_online_cpus();
+	cpus_read_lock();
 	atomic_set(&stp_sync.cpus, num_online_cpus() - 1);
-	stop_machine(stp_sync_clock, &stp_sync, cpu_online_mask);
-	put_online_cpus();
+	stop_machine_cpuslocked(stp_sync_clock, &stp_sync, cpu_online_mask);
+	cpus_read_unlock();
 
 	if (!check_sync_clock())
 		/*

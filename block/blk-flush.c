@@ -74,6 +74,7 @@
 #include "blk.h"
 #include "blk-mq.h"
 #include "blk-mq-tag.h"
+#include "blk-mq-sched.h"
 
 /* FLUSH/FUA sequences */
 enum {
@@ -163,7 +164,7 @@ static bool blk_flush_queue_rq(struct request *rq, bool add_front)
  */
 static bool blk_flush_complete_seq(struct request *rq,
 				   struct blk_flush_queue *fq,
-				   unsigned int seq, int error)
+				   unsigned int seq, blk_status_t error)
 {
 	struct request_queue *q = rq->q;
 	struct list_head *pending = &fq->flush_queue[fq->flush_pending_idx];
@@ -215,7 +216,7 @@ static bool blk_flush_complete_seq(struct request *rq,
 	return kicked | queued;
 }
 
-static void flush_end_io(struct request *flush_rq, int error)
+static void flush_end_io(struct request *flush_rq, blk_status_t error)
 {
 	struct request_queue *q = flush_rq->q;
 	struct list_head *running;
@@ -296,8 +297,14 @@ static bool blk_kick_flush(struct request_queue *q, struct blk_flush_queue *fq)
 	if (fq->flush_pending_idx != fq->flush_running_idx || list_empty(pending))
 		return false;
 
-	/* C2 and C3 */
+	/* C2 and C3
+	 *
+	 * For blk-mq + scheduling, we can risk having all driver tags
+	 * assigned to empty flushes, and we deadlock if we are expecting
+	 * other requests to make progress. Don't defer for that case.
+	 */
 	if (!list_empty(&fq->flush_data_in_flight) &&
+	    !(q->mq_ops && q->elevator) &&
 	    time_before(jiffies,
 			fq->flush_pending_since + FLUSH_PENDING_TIMEOUT))
 		return false;
@@ -326,7 +333,6 @@ static bool blk_kick_flush(struct request_queue *q, struct blk_flush_queue *fq)
 		blk_mq_tag_set_rq(hctx, first_rq->tag, flush_rq);
 	}
 
-	flush_rq->cmd_type = REQ_TYPE_FS;
 	flush_rq->cmd_flags = REQ_OP_FLUSH | REQ_PREFLUSH;
 	flush_rq->rq_flags |= RQF_FLUSH_SEQ;
 	flush_rq->rq_disk = first_rq->rq_disk;
@@ -335,10 +341,12 @@ static bool blk_kick_flush(struct request_queue *q, struct blk_flush_queue *fq)
 	return blk_flush_queue_rq(flush_rq, false);
 }
 
-static void flush_data_end_io(struct request *rq, int error)
+static void flush_data_end_io(struct request *rq, blk_status_t error)
 {
 	struct request_queue *q = rq->q;
 	struct blk_flush_queue *fq = blk_get_flush_queue(q, NULL);
+
+	lockdep_assert_held(q->queue_lock);
 
 	/*
 	 * Updating q->in_flight[] here for making this tag usable
@@ -376,7 +384,7 @@ static void flush_data_end_io(struct request *rq, int error)
 		blk_run_queue_async(q);
 }
 
-static void mq_flush_data_end_io(struct request *rq, int error)
+static void mq_flush_data_end_io(struct request *rq, blk_status_t error)
 {
 	struct request_queue *q = rq->q;
 	struct blk_mq_hw_ctx *hctx;
@@ -391,9 +399,10 @@ static void mq_flush_data_end_io(struct request *rq, int error)
 	 * the comment in flush_end_io().
 	 */
 	spin_lock_irqsave(&fq->mq_flush_lock, flags);
-	if (blk_flush_complete_seq(rq, fq, REQ_FSEQ_DATA, error))
-		blk_mq_run_hw_queue(hctx, true);
+	blk_flush_complete_seq(rq, fq, REQ_FSEQ_DATA, error);
 	spin_unlock_irqrestore(&fq->mq_flush_lock, flags);
+
+	blk_mq_run_hw_queue(hctx, true);
 }
 
 /**
@@ -404,9 +413,6 @@ static void mq_flush_data_end_io(struct request *rq, int error)
  * or __blk_mq_run_hw_queue() to dispatch request.
  * @rq is being submitted.  Analyze what needs to be done and put it on the
  * right queue.
- *
- * CONTEXT:
- * spin_lock_irq(q->queue_lock) in !mq case
  */
 void blk_insert_flush(struct request *rq)
 {
@@ -414,6 +420,9 @@ void blk_insert_flush(struct request *rq)
 	unsigned long fflags = q->queue_flags;	/* may change, cache */
 	unsigned int policy = blk_flush_policy(fflags, rq);
 	struct blk_flush_queue *fq = blk_get_flush_queue(q, rq->mq_ctx);
+
+	if (!q->mq_ops)
+		lockdep_assert_held(q->queue_lock);
 
 	/*
 	 * @policy now records what operations need to be done.  Adjust
@@ -440,7 +449,7 @@ void blk_insert_flush(struct request *rq)
 		if (q->mq_ops)
 			blk_mq_end_request(rq, 0);
 		else
-			__blk_end_bidi_request(rq, 0, 0, 0);
+			__blk_end_request(rq, 0, 0);
 		return;
 	}
 
@@ -453,9 +462,9 @@ void blk_insert_flush(struct request *rq)
 	 */
 	if ((policy & REQ_FSEQ_DATA) &&
 	    !(policy & (REQ_FSEQ_PREFLUSH | REQ_FSEQ_POSTFLUSH))) {
-		if (q->mq_ops) {
-			blk_mq_insert_request(rq, false, true, false);
-		} else
+		if (q->mq_ops)
+			blk_mq_sched_insert_request(rq, false, true, false, false);
+		else
 			list_add_tail(&rq->queuelist, &q->queue_head);
 		return;
 	}
@@ -490,8 +499,7 @@ void blk_insert_flush(struct request *rq)
  * Description:
  *    Issue a flush for the block device in question. Caller can supply
  *    room for storing the error offset in case of a flush error, if they
- *    wish to. If WAIT flag is not passed then caller may check only what
- *    request was pushed in some internal queue for later handling.
+ *    wish to.
  */
 int blkdev_issue_flush(struct block_device *bdev, gfp_t gfp_mask,
 		sector_t *error_sector)
@@ -545,11 +553,10 @@ struct blk_flush_queue *blk_alloc_flush_queue(struct request_queue *q,
 	if (!fq)
 		goto fail;
 
-	if (q->mq_ops) {
+	if (q->mq_ops)
 		spin_lock_init(&fq->mq_flush_lock);
-		rq_sz = round_up(rq_sz + cmd_size, cache_line_size());
-	}
 
+	rq_sz = round_up(rq_sz + cmd_size, cache_line_size());
 	fq->flush_rq = kzalloc_node(rq_sz, GFP_KERNEL, node);
 	if (!fq->flush_rq)
 		goto fail_rq;

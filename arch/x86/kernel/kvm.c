@@ -151,6 +151,8 @@ void kvm_async_pf_task_wait(u32 token)
 		if (hlist_unhashed(&n.link))
 			break;
 
+		rcu_irq_exit();
+
 		if (!n.halted) {
 			local_irq_enable();
 			schedule();
@@ -159,11 +161,11 @@ void kvm_async_pf_task_wait(u32 token)
 			/*
 			 * We cannot reschedule. So halt.
 			 */
-			rcu_irq_exit();
 			native_safe_halt();
-			rcu_irq_enter();
 			local_irq_disable();
 		}
+
+		rcu_irq_enter();
 	}
 	if (!n.halted)
 		finish_swait(&n.wq, &wait);
@@ -330,7 +332,12 @@ static void kvm_guest_cpu_init(void)
 #ifdef CONFIG_PREEMPT
 		pa |= KVM_ASYNC_PF_SEND_ALWAYS;
 #endif
-		wrmsrl(MSR_KVM_ASYNC_PF_EN, pa | KVM_ASYNC_PF_ENABLED);
+		pa |= KVM_ASYNC_PF_ENABLED;
+
+		/* Async page fault support for L1 hypervisor is optional */
+		if (wrmsr_safe(MSR_KVM_ASYNC_PF_EN,
+			(pa | KVM_ASYNC_PF_DELIVERY_AS_PF_VMEXIT) & 0xffffffff, pa >> 32) < 0)
+			wrmsrl(MSR_KVM_ASYNC_PF_EN, pa);
 		__this_cpu_write(apf_reason.enabled, 1);
 		printk(KERN_INFO"KVM setup async PF for cpu %d\n",
 		       smp_processor_id());
@@ -396,9 +403,9 @@ static u64 kvm_steal_clock(int cpu)
 	src = &per_cpu(steal_time, cpu);
 	do {
 		version = src->version;
-		rmb();
+		virt_rmb();
 		steal = src->steal;
-		rmb();
+		virt_rmb();
 	} while ((version & 1) || (version != src->version));
 
 	return steal;
@@ -589,13 +596,37 @@ out:
 	local_irq_restore(flags);
 }
 
-__visible bool __kvm_vcpu_is_preempted(int cpu)
+#ifdef CONFIG_X86_32
+__visible bool __kvm_vcpu_is_preempted(long cpu)
 {
 	struct kvm_steal_time *src = &per_cpu(steal_time, cpu);
 
 	return !!src->preempted;
 }
 PV_CALLEE_SAVE_REGS_THUNK(__kvm_vcpu_is_preempted);
+
+#else
+
+#include <asm/asm-offsets.h>
+
+extern bool __raw_callee_save___kvm_vcpu_is_preempted(long);
+
+/*
+ * Hand-optimize version for x86-64 to avoid 8 64-bit register saving and
+ * restoring to/from the stack.
+ */
+asm(
+".pushsection .text;"
+".global __raw_callee_save___kvm_vcpu_is_preempted;"
+".type __raw_callee_save___kvm_vcpu_is_preempted, @function;"
+"__raw_callee_save___kvm_vcpu_is_preempted:"
+"movq	__per_cpu_offset(,%rdi,8), %rax;"
+"cmpb	$0, " __stringify(KVM_STEAL_TIME_preempted) "+steal_time(%rax);"
+"setne	%al;"
+"ret;"
+".popsection");
+
+#endif
 
 /*
  * Setup pv_lock_ops to exploit KVM_FEATURE_PV_UNHALT if present.
@@ -619,19 +650,5 @@ void __init kvm_spinlock_init(void)
 			PV_CALLEE_SAVE(__kvm_vcpu_is_preempted);
 	}
 }
-
-static __init int kvm_spinlock_init_jump(void)
-{
-	if (!kvm_para_available())
-		return 0;
-	if (!kvm_para_has_feature(KVM_FEATURE_PV_UNHALT))
-		return 0;
-
-	static_key_slow_inc(&paravirt_ticketlocks_enabled);
-	printk(KERN_INFO "KVM setup paravirtual spinlock\n");
-
-	return 0;
-}
-early_initcall(kvm_spinlock_init_jump);
 
 #endif	/* CONFIG_PARAVIRT_SPINLOCKS */

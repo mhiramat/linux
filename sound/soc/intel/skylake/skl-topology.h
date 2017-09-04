@@ -39,6 +39,11 @@
 #define MODULE_MAX_IN_PINS	8
 #define MODULE_MAX_OUT_PINS	8
 
+#define SKL_MIC_CH_SUPPORT	4
+#define SKL_MIC_MAX_CH_SUPPORT	8
+#define SKL_DEFAULT_MIC_SEL_GAIN	0x3FF
+#define SKL_MIC_SEL_SWITCH	0x3
+
 enum skl_channel_index {
 	SKL_CHANNEL_LEFT = 0,
 	SKL_CHANNEL_RIGHT = 1,
@@ -254,7 +259,11 @@ struct skl_pipe_params {
 	u32 s_freq;
 	u32 s_fmt;
 	u8 linktype;
+	snd_pcm_format_t format;
+	int link_index;
 	int stream;
+	unsigned int host_bps;
+	unsigned int link_bps;
 };
 
 struct skl_pipe {
@@ -305,11 +314,14 @@ struct skl_module_cfg {
 	u8 dev_type;
 	u8 dma_id;
 	u8 time_slot;
+	u8 dmic_ch_combo_index;
+	u32 dmic_ch_type;
 	u32 params_fixup;
 	u32 converter;
 	u32 vbus_id;
 	u32 mem_pages;
 	enum d0i3_capability d0i3_caps;
+	u32 dma_buffer_size; /* in milli seconds */
 	struct skl_module_pin *m_in_pin;
 	struct skl_module_pin *m_out_pin;
 	enum skl_module_type m_type;
@@ -330,6 +342,25 @@ struct skl_algo_data {
 struct skl_pipeline {
 	struct skl_pipe *pipe;
 	struct list_head node;
+};
+
+struct skl_module_deferred_bind {
+	struct skl_module_cfg *src;
+	struct skl_module_cfg *dst;
+	struct list_head node;
+};
+
+struct skl_mic_sel_config {
+	u16 mic_switch;
+	u16 flags;
+	u16 blob[SKL_MIC_MAX_CH_SUPPORT][SKL_MIC_MAX_CH_SUPPORT];
+} __packed;
+
+enum skl_channel {
+	SKL_CH_MONO = 1,
+	SKL_CH_STEREO = 2,
+	SKL_CH_TRIO = 3,
+	SKL_CH_QUATRO = 4,
 };
 
 static inline struct skl *get_skl_ctx(struct device *dev)
@@ -383,4 +414,8 @@ int skl_get_module_params(struct skl_sst *ctx, u32 *params, int size,
 struct skl_module_cfg *skl_tplg_be_get_cpr_module(struct snd_soc_dai *dai,
 								int stream);
 enum skl_bitdepth skl_get_bit_depth(int params);
+int skl_pcm_host_dma_prepare(struct device *dev,
+			struct skl_pipe_params *params);
+int skl_pcm_link_dma_prepare(struct device *dev,
+			struct skl_pipe_params *params);
 #endif

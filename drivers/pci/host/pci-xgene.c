@@ -246,14 +246,11 @@ static int xgene_pcie_ecam_init(struct pci_config_window *cfg, u32 ipversion)
 	ret = xgene_get_csr_resource(adev, &csr);
 	if (ret) {
 		dev_err(dev, "can't get CSR resource\n");
-		kfree(port);
 		return ret;
 	}
-	port->csr_base = devm_ioremap_resource(dev, &csr);
-	if (IS_ERR(port->csr_base)) {
-		kfree(port);
-		return -ENOMEM;
-	}
+	port->csr_base = devm_pci_remap_cfg_resource(dev, &csr);
+	if (IS_ERR(port->csr_base))
+		return PTR_ERR(port->csr_base);
 
 	port->cfg_base = cfg->win;
 	port->version = ipversion;
@@ -362,7 +359,7 @@ static int xgene_pcie_map_reg(struct xgene_pcie_port *port,
 	struct resource *res;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "csr");
-	port->csr_base = devm_ioremap_resource(dev, res);
+	port->csr_base = devm_pci_remap_cfg_resource(dev, res);
 	if (IS_ERR(port->csr_base))
 		return PTR_ERR(port->csr_base);
 
@@ -638,13 +635,16 @@ static int xgene_pcie_probe_bridge(struct platform_device *pdev)
 	struct device_node *dn = dev->of_node;
 	struct xgene_pcie_port *port;
 	resource_size_t iobase = 0;
-	struct pci_bus *bus;
+	struct pci_bus *bus, *child;
+	struct pci_host_bridge *bridge;
 	int ret;
 	LIST_HEAD(res);
 
-	port = devm_kzalloc(dev, sizeof(*port), GFP_KERNEL);
-	if (!port)
+	bridge = devm_pci_alloc_host_bridge(dev, sizeof(*port));
+	if (!bridge)
 		return -ENOMEM;
+
+	port = pci_host_bridge_priv(bridge);
 
 	port->node = of_node_get(dn);
 	port->dev = dev;
@@ -673,14 +673,24 @@ static int xgene_pcie_probe_bridge(struct platform_device *pdev)
 	if (ret)
 		goto error;
 
-	bus = pci_create_root_bus(dev, 0, &xgene_pcie_ops, port, &res);
-	if (!bus) {
-		ret = -ENOMEM;
+	list_splice_init(&res, &bridge->windows);
+	bridge->dev.parent = dev;
+	bridge->sysdata = port;
+	bridge->busnr = 0;
+	bridge->ops = &xgene_pcie_ops;
+	bridge->map_irq = of_irq_parse_and_map_pci;
+	bridge->swizzle_irq = pci_common_swizzle;
+
+	ret = pci_scan_root_bus_bridge(bridge);
+	if (ret < 0)
 		goto error;
-	}
+
+	bus = bridge->bus;
 
 	pci_scan_child_bus(bus);
 	pci_assign_unassigned_bus_resources(bus);
+	list_for_each_entry(child, &bus->children, node)
+		pcie_bus_configure_settings(child);
 	pci_bus_add_devices(bus);
 	return 0;
 
@@ -698,6 +708,7 @@ static struct platform_driver xgene_pcie_driver = {
 	.driver = {
 		   .name = "xgene-pcie",
 		   .of_match_table = of_match_ptr(xgene_pcie_match_table),
+		   .suppress_bind_attrs = true,
 	},
 	.probe = xgene_pcie_probe_bridge,
 };

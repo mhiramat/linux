@@ -53,6 +53,9 @@ bool seg6_validate_srh(struct ipv6_sr_hdr *srh, int len)
 		struct sr6_tlv *tlv;
 		unsigned int tlv_len;
 
+		if (trailing < sizeof(*tlv))
+			return false;
+
 		tlv = (struct sr6_tlv *)((unsigned char *)srh + tlv_offset);
 		tlv_len = sizeof(*tlv) + tlv->len;
 
@@ -176,6 +179,8 @@ static int seg6_genl_set_tunsrc(struct sk_buff *skb, struct genl_info *info)
 
 	val = nla_data(info->attrs[SEG6_ATTR_DST]);
 	t_new = kmemdup(val, sizeof(*val), GFP_KERNEL);
+	if (!t_new)
+		return -ENOMEM;
 
 	mutex_lock(&sdata->lock);
 
@@ -298,12 +303,8 @@ static int seg6_genl_dumphmac_done(struct netlink_callback *cb)
 static int seg6_genl_dumphmac(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct rhashtable_iter *iter = (struct rhashtable_iter *)cb->args[0];
-	struct net *net = sock_net(skb->sk);
-	struct seg6_pernet_data *sdata;
 	struct seg6_hmac_info *hinfo;
 	int ret;
-
-	sdata = seg6_pernet(net);
 
 	ret = rhashtable_walk_start(iter);
 	if (ret && ret != -EAGAIN)

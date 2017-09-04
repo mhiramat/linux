@@ -11,6 +11,9 @@
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/sched.h>
+#include <linux/sched/debug.h>
+#include <linux/sched/task.h>
+#include <linux/sched/task_stack.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
@@ -35,14 +38,6 @@
 #include <asm/reset-regs.h>
 #include <asm/gdb-stub.h>
 #include "internal.h"
-
-/*
- * return saved PC of a blocked thread.
- */
-unsigned long thread_saved_pc(struct task_struct *tsk)
-{
-	return ((unsigned long *) tsk->thread.sp)[3];
-}
 
 /*
  * power off function, if any

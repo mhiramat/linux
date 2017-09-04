@@ -91,7 +91,7 @@ module_param_array(probe_vf, byte, &probe_vfs_argc, 0444);
 MODULE_PARM_DESC(probe_vf, "number of vfs to probe by pf driver (num_vfs > 0)\n"
 			   "probe_vf=port1,port2,port1+2");
 
-int mlx4_log_num_mgm_entry_size = MLX4_DEFAULT_MGM_LOG_ENTRY_SIZE;
+static int mlx4_log_num_mgm_entry_size = MLX4_DEFAULT_MGM_LOG_ENTRY_SIZE;
 module_param_named(log_num_mgm_entry_size,
 			mlx4_log_num_mgm_entry_size, int, 0444);
 MODULE_PARM_DESC(log_num_mgm_entry_size, "log mgm size, that defines the num"
@@ -119,7 +119,7 @@ MODULE_PARM_DESC(enable_4k_uar,
 
 static char mlx4_version[] =
 	DRV_NAME ": Mellanox ConnectX core driver v"
-	DRV_VERSION " (" DRV_RELDATE ")\n";
+	DRV_VERSION "\n";
 
 static struct mlx4_profile default_profile = {
 	.num_qp		= 1 << 18,
@@ -424,13 +424,15 @@ static int mlx4_dev_cap(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
 	dev->caps.stat_rate_support  = dev_cap->stat_rate_support;
 	dev->caps.max_gso_sz	     = dev_cap->max_gso_sz;
 	dev->caps.max_rss_tbl_sz     = dev_cap->max_rss_tbl_sz;
+	dev->caps.wol_port[1]          = dev_cap->wol_port[1];
+	dev->caps.wol_port[2]          = dev_cap->wol_port[2];
 
 	/* Save uar page shift */
 	if (!mlx4_is_slave(dev)) {
 		/* Virtual PCI function needs to determine UAR page size from
 		 * firmware. Only master PCI function can set the uar page size
 		 */
-		if (enable_4k_uar)
+		if (enable_4k_uar || !dev->persist->num_vfs)
 			dev->uar_page_shift = DEFAULT_UAR_PAGE_SHIFT;
 		else
 			dev->uar_page_shift = PAGE_SHIFT;
@@ -838,10 +840,8 @@ static int mlx4_slave_cap(struct mlx4_dev *dev)
 	 */
 	if (hca_param.global_caps) {
 		mlx4_err(dev, "Unknown hca global capabilities\n");
-		return -ENOSYS;
+		return -EINVAL;
 	}
-
-	mlx4_log_num_mgm_entry_size = hca_param.log_mc_entry_sz;
 
 	dev->caps.hca_core_clock = hca_param.hca_core_clock;
 
@@ -896,7 +896,7 @@ static int mlx4_slave_cap(struct mlx4_dev *dev)
 	    PF_CONTEXT_BEHAVIOUR_MASK) {
 		mlx4_err(dev, "Unknown pf context behaviour %x known flags %x\n",
 			 func_cap.pf_context_behaviour, PF_CONTEXT_BEHAVIOUR_MASK);
-		return -ENOSYS;
+		return -EINVAL;
 	}
 
 	dev->caps.num_ports		= func_cap.num_ports;
@@ -1447,7 +1447,7 @@ int mlx4_port_map_set(struct mlx4_dev *dev, struct mlx4_port_map *v2p)
 	int err;
 
 	if (!(dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_PORT_REMAP))
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 
 	mutex_lock(&priv->bond_mutex);
 
@@ -1884,7 +1884,7 @@ int mlx4_get_internal_clock_params(struct mlx4_dev *dev,
 	struct mlx4_priv *priv = mlx4_priv(dev);
 
 	if (mlx4_is_slave(dev))
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 
 	if (!params)
 		return -EINVAL;
@@ -1942,6 +1942,14 @@ static int mlx4_comm_check_offline(struct mlx4_dev *dev)
 			       (u32)(1 << COMM_CHAN_OFFLINE_OFFSET));
 		if (!offline_bit)
 			return 0;
+
+		/* If device removal has been requested,
+		 * do not continue retrying.
+		 */
+		if (dev->persist->interface_state &
+		    MLX4_INTERFACE_STATE_NOWAIT)
+			break;
+
 		/* There are cases as part of AER/Reset flow that PF needs
 		 * around 100 msec to load. We therefore sleep for 100 msec
 		 * to allow other tasks to make use of that CPU during this
@@ -2269,7 +2277,7 @@ static int mlx4_init_hca(struct mlx4_dev *dev)
 
 		dev->caps.max_fmr_maps = (1 << (32 - ilog2(dev->caps.num_mpts))) - 1;
 
-		if (enable_4k_uar) {
+		if (enable_4k_uar || !dev->persist->num_vfs) {
 			init_hca.log_uar_sz = ilog2(dev->caps.num_uars) +
 						    PAGE_SHIFT - DEFAULT_UAR_PAGE_SHIFT;
 			init_hca.uar_page_sz = DEFAULT_UAR_PAGE_SHIFT - 12;
@@ -2350,8 +2358,8 @@ static int mlx4_init_hca(struct mlx4_dev *dev)
 					MLX4_A0_STEERING_TABLE_SIZE;
 			}
 
-			mlx4_dbg(dev, "DMFS high rate steer mode is: %s\n",
-				 dmfs_high_rate_steering_mode_str(
+			mlx4_info(dev, "DMFS high rate steer mode is: %s\n",
+				  dmfs_high_rate_steering_mode_str(
 					dev->caps.dmfs_high_steer_mode));
 		}
 	} else {
@@ -2384,7 +2392,7 @@ static int mlx4_init_hca(struct mlx4_dev *dev)
 
 	/* Query CONFIG_DEV parameters */
 	err = mlx4_config_dev_retrieval(dev, &params);
-	if (err && err != -ENOTSUPP) {
+	if (err && err != -EOPNOTSUPP) {
 		mlx4_err(dev, "Failed to query CONFIG_DEV parameters\n");
 	} else if (!err) {
 		dev->caps.rx_checksum_flags_port[1] = params.rx_csum_flags_port_1;
@@ -2469,7 +2477,7 @@ static int mlx4_allocate_default_counters(struct mlx4_dev *dev)
 		priv->def_counter[port] = -1;
 
 	for (port = 0; port < dev->caps.num_ports; port++) {
-		err = mlx4_counter_alloc(dev, &idx);
+		err = mlx4_counter_alloc(dev, &idx, MLX4_RES_USAGE_DRIVER);
 
 		if (!err || err == -ENOSPC) {
 			priv->def_counter[port] = idx;
@@ -2511,13 +2519,14 @@ int __mlx4_counter_alloc(struct mlx4_dev *dev, u32 *idx)
 	return 0;
 }
 
-int mlx4_counter_alloc(struct mlx4_dev *dev, u32 *idx)
+int mlx4_counter_alloc(struct mlx4_dev *dev, u32 *idx, u8 usage)
 {
+	u32 in_modifier = RES_COUNTER | (((u32)usage & 3) << 30);
 	u64 out_param;
 	int err;
 
 	if (mlx4_is_mfunc(dev)) {
-		err = mlx4_cmd_imm(dev, 0, &out_param, RES_COUNTER,
+		err = mlx4_cmd_imm(dev, 0, &out_param, in_modifier,
 				   RES_OP_RESERVE, MLX4_CMD_ALLOC_RES,
 				   MLX4_CMD_TIME_CLASS_A, MLX4_CMD_WRAPPED);
 		if (!err)
@@ -2856,12 +2865,10 @@ static void mlx4_enable_msi_x(struct mlx4_dev *dev)
 	int port = 0;
 
 	if (msi_x) {
-		int nreq = dev->caps.num_ports * num_online_cpus() + 1;
-
-		nreq = min_t(int, dev->caps.num_eqs - dev->caps.reserved_eqs,
-			     nreq);
-		if (nreq > MAX_MSIX)
-			nreq = MAX_MSIX;
+		int nreq = min3(dev->caps.num_ports *
+				(int)num_online_cpus() + 1,
+				dev->caps.num_eqs - dev->caps.reserved_eqs,
+				MAX_MSIX);
 
 		entries = kcalloc(nreq, sizeof *entries, GFP_KERNEL);
 		if (!entries)
@@ -3492,7 +3499,7 @@ slave_start:
 	mlx4_enable_msi_x(dev);
 	if ((mlx4_is_mfunc(dev)) &&
 	    !(dev->flags & MLX4_FLAG_MSI_X)) {
-		err = -ENOSYS;
+		err = -EOPNOTSUPP;
 		mlx4_err(dev, "INTx is not supported in multi-function mode, aborting\n");
 		goto err_free_eq;
 	}
@@ -3502,6 +3509,8 @@ slave_start:
 		if (err)
 			goto err_disable_msix;
 	}
+
+	mlx4_init_quotas(dev);
 
 	err = mlx4_setup_hca(dev);
 	if (err == -EBUSY && (dev->flags & MLX4_FLAG_MSI_X) &&
@@ -3515,7 +3524,6 @@ slave_start:
 	if (err)
 		goto err_steer;
 
-	mlx4_init_quotas(dev);
 	/* When PF resources are ready arm its comm channel to enable
 	 * getting commands
 	 */
@@ -3955,6 +3963,9 @@ static void mlx4_remove_one(struct pci_dev *pdev)
 	struct mlx4_priv *priv = mlx4_priv(dev);
 	struct devlink *devlink = priv_to_devlink(priv);
 	int active_vfs = 0;
+
+	if (mlx4_is_slave(dev))
+		persist->interface_state |= MLX4_INTERFACE_STATE_NOWAIT;
 
 	mutex_lock(&persist->interface_state_mutex);
 	persist->interface_state |= MLX4_INTERFACE_STATE_DELETION;

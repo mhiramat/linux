@@ -306,16 +306,13 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 		},
 	},
 	{
-	/* https://bugzilla.redhat.com/show_bug.cgi?id=1204476 */
-	/* https://bugs.launchpad.net/ubuntu/+source/linux-lts-trusty/+bug/1416940 */
-	.callback = video_detect_force_native,
-	.ident = "HP Pavilion dv6",
-	.matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "HP Pavilion dv6 Notebook PC"),
+	 .callback = video_detect_force_native,
+	 .ident = "Dell Precision 7510",
+	 .matches = {
+		DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+		DMI_MATCH(DMI_PRODUCT_NAME, "Precision 7510"),
 		},
 	},
-
 	{ },
 };
 

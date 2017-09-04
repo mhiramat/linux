@@ -1718,7 +1718,7 @@ static int gfar_restore(struct device *dev)
 	return 0;
 }
 
-static struct dev_pm_ops gfar_pm_ops = {
+static const struct dev_pm_ops gfar_pm_ops = {
 	.suspend = gfar_suspend,
 	.resume = gfar_resume,
 	.freeze = gfar_suspend,
@@ -2010,8 +2010,8 @@ static void free_skb_rx_queue(struct gfar_priv_rx_q *rx_queue)
 		if (!rxb->page)
 			continue;
 
-		dma_unmap_single(rx_queue->dev, rxb->dma,
-				 PAGE_SIZE, DMA_FROM_DEVICE);
+		dma_unmap_page(rx_queue->dev, rxb->dma,
+			       PAGE_SIZE, DMA_FROM_DEVICE);
 		__free_page(rxb->page);
 
 		rxb->page = NULL;
@@ -2250,7 +2250,7 @@ static int gfar_enet_open(struct net_device *dev)
 
 static inline struct txfcb *gfar_add_fcb(struct sk_buff *skb)
 {
-	struct txfcb *fcb = (struct txfcb *)skb_push(skb, GMAC_FCB_LEN);
+	struct txfcb *fcb = skb_push(skb, GMAC_FCB_LEN);
 
 	memset(fcb, 0, GMAC_FCB_LEN);
 
@@ -2948,7 +2948,7 @@ static bool gfar_add_rx_frag(struct gfar_rx_buff *rxb, u32 lstatus,
 	}
 
 	/* try reuse page */
-	if (unlikely(page_count(page) != 1))
+	if (unlikely(page_count(page) != 1 || page_is_pfmemalloc(page)))
 		return false;
 
 	/* change offset to the other half */
@@ -3183,7 +3183,7 @@ static int gfar_poll_rx_sq(struct napi_struct *napi, int budget)
 
 	if (work_done < budget) {
 		u32 imask;
-		napi_complete(napi);
+		napi_complete_done(napi, work_done);
 		/* Clear the halt bit in RSTAT */
 		gfar_write(&regs->rstat, gfargrp->rstat);
 
@@ -3272,7 +3272,7 @@ static int gfar_poll_rx(struct napi_struct *napi, int budget)
 
 	if (!num_act_queues) {
 		u32 imask;
-		napi_complete(napi);
+		napi_complete_done(napi, work_done);
 
 		/* Clear the halt bit in RSTAT */
 		gfar_write(&regs->rstat, gfargrp->rstat);

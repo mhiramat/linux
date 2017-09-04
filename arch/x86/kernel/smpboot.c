@@ -45,6 +45,9 @@
 #include <linux/smp.h>
 #include <linux/export.h>
 #include <linux/sched.h>
+#include <linux/sched/topology.h>
+#include <linux/sched/hotplug.h>
+#include <linux/sched/task_stack.h>
 #include <linux/percpu.h>
 #include <linux/bootmem.h>
 #include <linux/err.h>
@@ -433,9 +436,15 @@ static bool match_smt(struct cpuinfo_x86 *c, struct cpuinfo_x86 *o)
 		int cpu1 = c->cpu_index, cpu2 = o->cpu_index;
 
 		if (c->phys_proc_id == o->phys_proc_id &&
-		    per_cpu(cpu_llc_id, cpu1) == per_cpu(cpu_llc_id, cpu2) &&
-		    c->cpu_core_id == o->cpu_core_id)
-			return topology_sane(c, o, "smt");
+		    per_cpu(cpu_llc_id, cpu1) == per_cpu(cpu_llc_id, cpu2)) {
+			if (c->cpu_core_id == o->cpu_core_id)
+				return topology_sane(c, o, "smt");
+
+			if ((c->cu_id != 0xff) &&
+			    (o->cu_id != 0xff) &&
+			    (c->cu_id == o->cu_id))
+				return topology_sane(c, o, "smt");
+		}
 
 	} else if (c->phys_proc_id == o->phys_proc_id &&
 		   c->cpu_core_id == o->cpu_core_id) {
@@ -854,7 +863,7 @@ static void announce_cpu(int cpu, int apicid)
 	if (cpu == 1)
 		printk(KERN_INFO "x86: Booting SMP configuration:\n");
 
-	if (system_state == SYSTEM_BOOTING) {
+	if (system_state < SYSTEM_RUNNING) {
 		if (node != current_node) {
 			if (current_node > (-1))
 				pr_cont("\n");
@@ -962,7 +971,8 @@ void common_cpu_up(unsigned int cpu, struct task_struct *idle)
  * Returns zero if CPU booted OK, else error code from
  * ->wakeup_secondary_cpu.
  */
-static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle)
+static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle,
+		       int *cpu0_nmi_registered)
 {
 	volatile u32 *trampoline_status =
 		(volatile u32 *) __va(real_mode_header->trampoline_status);
@@ -970,11 +980,10 @@ static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle)
 	unsigned long start_ip = real_mode_header->trampoline_start;
 
 	unsigned long boot_error = 0;
-	int cpu0_nmi_registered = 0;
 	unsigned long timeout;
 
 	idle->thread.sp = (unsigned long)task_pt_regs(idle);
-	early_gdt_descr.address = (unsigned long)get_cpu_gdt_table(cpu);
+	early_gdt_descr.address = (unsigned long)get_cpu_gdt_rw(cpu);
 	initial_code = (unsigned long)start_secondary;
 	initial_stack  = idle->thread.sp;
 
@@ -1026,7 +1035,7 @@ static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle)
 		boot_error = apic->wakeup_secondary_cpu(apicid, start_ip);
 	else
 		boot_error = wakeup_cpu_via_init_nmi(cpu, start_ip, apicid,
-						     &cpu0_nmi_registered);
+						     cpu0_nmi_registered);
 
 	if (!boot_error) {
 		/*
@@ -1071,12 +1080,6 @@ static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle)
 		 */
 		smpboot_restore_warm_reset_vector();
 	}
-	/*
-	 * Clean up the nmi handler. Do this after the callin and callout sync
-	 * to avoid impact of possible long unregister time.
-	 */
-	if (cpu0_nmi_registered)
-		unregister_nmi_handler(NMI_LOCAL, "wake_cpu0");
 
 	return boot_error;
 }
@@ -1084,8 +1087,9 @@ static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle)
 int native_cpu_up(unsigned int cpu, struct task_struct *tidle)
 {
 	int apicid = apic->cpu_present_to_apicid(cpu);
+	int cpu0_nmi_registered = 0;
 	unsigned long flags;
-	int err;
+	int err, ret = 0;
 
 	WARN_ON(irqs_disabled());
 
@@ -1122,10 +1126,11 @@ int native_cpu_up(unsigned int cpu, struct task_struct *tidle)
 
 	common_cpu_up(cpu, tidle);
 
-	err = do_boot_cpu(apicid, cpu, tidle);
+	err = do_boot_cpu(apicid, cpu, tidle, &cpu0_nmi_registered);
 	if (err) {
 		pr_err("do_boot_cpu failed(%d) to wakeup CPU#%u\n", err, cpu);
-		return -EIO;
+		ret = -EIO;
+		goto unreg_nmi;
 	}
 
 	/*
@@ -1141,7 +1146,15 @@ int native_cpu_up(unsigned int cpu, struct task_struct *tidle)
 		touch_nmi_watchdog();
 	}
 
-	return 0;
+unreg_nmi:
+	/*
+	 * Clean up the nmi handler. Do this after the callin and callout sync
+	 * to avoid impact of possible long unregister time.
+	 */
+	if (cpu0_nmi_registered)
+		unregister_nmi_handler(NMI_LOCAL, "wake_cpu0");
+
+	return ret;
 }
 
 /**
@@ -1341,8 +1354,7 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 	pr_info("CPU0: ");
 	print_cpu_info(&cpu_data(0));
 
-	if (is_uv_system())
-		uv_system_init();
+	uv_system_init();
 
 	set_mtrr_aps_delayed_init();
 
@@ -1581,7 +1593,6 @@ void native_cpu_die(unsigned int cpu)
 void play_dead_common(void)
 {
 	idle_task_exit();
-	reset_lazy_tlbstate();
 
 	/* Ack it */
 	(void)cpu_report_death();

@@ -69,15 +69,23 @@ struct rpcrdma_ia {
 	struct rdma_cm_id 	*ri_id;
 	struct ib_pd		*ri_pd;
 	struct completion	ri_done;
+	struct completion	ri_remove_done;
 	int			ri_async_rc;
 	unsigned int		ri_max_segs;
 	unsigned int		ri_max_frmr_depth;
 	unsigned int		ri_max_inline_write;
 	unsigned int		ri_max_inline_read;
+	unsigned int		ri_max_send_sges;
 	bool			ri_reminv_expected;
+	bool			ri_implicit_roundup;
 	enum ib_mr_type		ri_mrtype;
+	unsigned long		ri_flags;
 	struct ib_qp_attr	ri_qp_attr;
 	struct ib_qp_init_attr	ri_qp_init_attr;
+};
+
+enum {
+	RPCRDMA_IAF_REMOVING = 0,
 };
 
 /*
@@ -162,6 +170,12 @@ rdmab_to_msg(struct rpcrdma_regbuf *rb)
 	return (struct rpcrdma_msg *)rb->rg_base;
 }
 
+static inline struct ib_device *
+rdmab_device(struct rpcrdma_regbuf *rb)
+{
+	return rb->rg_device;
+}
+
 #define RPCRDMA_DEF_GFP		(GFP_NOIO | __GFP_NOWARN)
 
 /* To ensure a transport can always make forward progress,
@@ -207,7 +221,6 @@ struct rpcrdma_rep {
 	unsigned int		rr_len;
 	int			rr_wc_flags;
 	u32			rr_inv_rkey;
-	struct ib_device	*rr_device;
 	struct rpcrdma_xprt	*rr_rxprt;
 	struct work_struct	rr_work;
 	struct list_head	rr_list;
@@ -258,6 +271,7 @@ struct rpcrdma_mw {
 	struct scatterlist	*mw_sg;
 	int			mw_nents;
 	enum dma_data_direction	mw_dir;
+	unsigned long		mw_flags;
 	union {
 		struct rpcrdma_fmr	fmr;
 		struct rpcrdma_frmr	frmr;
@@ -267,6 +281,11 @@ struct rpcrdma_mw {
 	u32			mw_length;
 	u64			mw_offset;
 	struct list_head	mw_all;
+};
+
+/* mw_flags */
+enum {
+	RPCRDMA_MW_F_RI		= 1,
 };
 
 /*
@@ -303,21 +322,26 @@ struct rpcrdma_mr_seg {		/* chunk descriptors */
 	char		*mr_offset;	/* kva if no page, else offset */
 };
 
-/* Reserve enough Send SGEs to send a maximum size inline request:
+/* The Send SGE array is provisioned to send a maximum size
+ * inline request:
  * - RPC-over-RDMA header
  * - xdr_buf head iovec
- * - RPCRDMA_MAX_INLINE bytes, possibly unaligned, in pages
+ * - RPCRDMA_MAX_INLINE bytes, in pages
  * - xdr_buf tail iovec
+ *
+ * The actual number of array elements consumed by each RPC
+ * depends on the device's max_sge limit.
  */
 enum {
-	RPCRDMA_MAX_SEND_PAGES = PAGE_SIZE + RPCRDMA_MAX_INLINE - 1,
-	RPCRDMA_MAX_PAGE_SGES = (RPCRDMA_MAX_SEND_PAGES >> PAGE_SHIFT) + 1,
+	RPCRDMA_MIN_SEND_SGES = 3,
+	RPCRDMA_MAX_PAGE_SGES = RPCRDMA_MAX_INLINE >> PAGE_SHIFT,
 	RPCRDMA_MAX_SEND_SGES = 1 + 1 + RPCRDMA_MAX_PAGE_SGES + 1,
 };
 
 struct rpcrdma_buffer;
 struct rpcrdma_req {
-	struct list_head	rl_free;
+	struct list_head	rl_list;
+	__be32			rl_xid;
 	unsigned int		rl_mapped_sges;
 	unsigned int		rl_connect_cookie;
 	struct rpcrdma_buffer	*rl_buffer;
@@ -348,6 +372,22 @@ rpcr_to_rdmar(struct rpc_rqst *rqst)
 	return rqst->rq_xprtdata;
 }
 
+static inline void
+rpcrdma_push_mw(struct rpcrdma_mw *mw, struct list_head *list)
+{
+	list_add_tail(&mw->mw_list, list);
+}
+
+static inline struct rpcrdma_mw *
+rpcrdma_pop_mw(struct list_head *list)
+{
+	struct rpcrdma_mw *mw;
+
+	mw = list_first_entry(list, struct rpcrdma_mw, mw_list);
+	list_del(&mw->mw_list);
+	return mw;
+}
+
 /*
  * struct rpcrdma_buffer -- holds list/queue of pre-registered memory for
  * inline requests/replies, and client/server credits.
@@ -358,12 +398,12 @@ struct rpcrdma_buffer {
 	spinlock_t		rb_mwlock;	/* protect rb_mws list */
 	struct list_head	rb_mws;
 	struct list_head	rb_all;
-	char			*rb_pool;
 
 	spinlock_t		rb_lock;	/* protect buf lists */
 	int			rb_send_count, rb_recv_count;
 	struct list_head	rb_send_bufs;
 	struct list_head	rb_recv_bufs;
+	struct list_head	rb_pending;
 	u32			rb_max_requests;
 	atomic_t		rb_credits;	/* most recent credit grant */
 
@@ -429,7 +469,7 @@ struct rpcrdma_memreg_ops {
 				  struct rpcrdma_mr_seg *, int, bool,
 				  struct rpcrdma_mw **);
 	void		(*ro_unmap_sync)(struct rpcrdma_xprt *,
-					 struct rpcrdma_req *);
+					 struct list_head *);
 	void		(*ro_unmap_safe)(struct rpcrdma_xprt *,
 					 struct rpcrdma_req *, bool);
 	void		(*ro_recover_mr)(struct rpcrdma_mw *);
@@ -475,10 +515,16 @@ struct rpcrdma_xprt {
  * Default is 0, see sysctl entry and rpc_rdma.c rpcrdma_convert_iovs() */
 extern int xprt_rdma_pad_optimize;
 
+/* This setting controls the hunt for a supported memory
+ * registration strategy.
+ */
+extern unsigned int xprt_rdma_memreg_strategy;
+
 /*
  * Interface Adapter calls - xprtrdma/verbs.c
  */
-int rpcrdma_ia_open(struct rpcrdma_xprt *, struct sockaddr *, int);
+int rpcrdma_ia_open(struct rpcrdma_xprt *xprt, struct sockaddr *addr);
+void rpcrdma_ia_remove(struct rpcrdma_ia *ia);
 void rpcrdma_ia_close(struct rpcrdma_ia *);
 bool frwr_is_supported(struct rpcrdma_ia *);
 bool fmr_is_supported(struct rpcrdma_ia *);
@@ -505,6 +551,34 @@ struct rpcrdma_rep *rpcrdma_create_rep(struct rpcrdma_xprt *);
 void rpcrdma_destroy_req(struct rpcrdma_req *);
 int rpcrdma_buffer_create(struct rpcrdma_xprt *);
 void rpcrdma_buffer_destroy(struct rpcrdma_buffer *);
+
+static inline void
+rpcrdma_insert_req(struct rpcrdma_buffer *buffers, struct rpcrdma_req *req)
+{
+	spin_lock(&buffers->rb_lock);
+	if (list_empty(&req->rl_list))
+		list_add_tail(&req->rl_list, &buffers->rb_pending);
+	spin_unlock(&buffers->rb_lock);
+}
+
+static inline struct rpcrdma_req *
+rpcrdma_lookup_req_locked(struct rpcrdma_buffer *buffers, __be32 xid)
+{
+	struct rpcrdma_req *pos;
+
+	list_for_each_entry(pos, &buffers->rb_pending, rl_list)
+		if (pos->rl_xid == xid)
+			return pos;
+	return NULL;
+}
+
+static inline void
+rpcrdma_remove_req(struct rpcrdma_buffer *buffers, struct rpcrdma_req *req)
+{
+	spin_lock(&buffers->rb_lock);
+	list_del(&req->rl_list);
+	spin_unlock(&buffers->rb_lock);
+}
 
 struct rpcrdma_mw *rpcrdma_get_mw(struct rpcrdma_xprt *);
 void rpcrdma_put_mw(struct rpcrdma_xprt *, struct rpcrdma_mw *);
