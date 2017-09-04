@@ -1556,7 +1556,7 @@ int native_cpu_disable(void)
 {
 	int ret;
 
-	ret = check_irq_vectors_for_cpu_disable();
+	ret = apic_can_unplug_cpu();
 	if (ret)
 		return ret;
 

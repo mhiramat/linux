@@ -748,7 +748,63 @@ void irq_force_complete_move(struct irq_desc *desc)
 	data->prev_target_cpu = NO_TARGET_CPU;
 	raw_spin_unlock(&vector_lock);
 }
-#endif
+
+#ifdef CONFIG_HOTPLUG_CPU
+/*
+ * Note, this is not accurate accounting, but at least good enough to
+ * prevent that the actual interrupt move will run out of vectors.
+ */
+int apic_can_unplug_cpu(void)
+{
+	unsigned int cpu, thiscpu = smp_processor_id();
+	unsigned int vector, tomove, avl = 0;
+	struct irq_matrix *m = vector_matrix;
+	int ret = 0;
+
+	raw_spin_lock(&vector_lock);
+	tomove = irq_matrix_allocated(vector_matrix, thiscpu);
+
+	for_each_online_cpu(cpu) {
+		if (cpu != thiscpu)
+			avl += irq_matrix_available(vector_matrix, cpu);
+
+		if (avl >= tomove)
+			goto out;
+	}
+
+	/*
+	 * @tomove is over estimated as it does not take per cpu, unused
+	 * or affinity managed interrupts into account.
+	 */
+	tomove = 0;
+	for (vector = FIRST_EXTERNAL_VECTOR; vector < FIRST_SYSTEM_VECTOR;
+	     vector = irq_matrix_get_next(m, thiscpu, vector)) {
+		struct irq_desc *desc = this_cpu_read(vector_irq[vector]);
+		struct irq_data *data;
+
+		/*
+		 * Lockless access is fine here. The vector/descriptor cannot
+		 * vanish because vector lock is held.
+		 */
+		if (IS_ERR_OR_NULL(desc) || !irq_desc_has_action(desc))
+			continue;
+		data = irq_desc_get_irq_data(desc);
+		if (irqd_is_per_cpu(data) || irqd_affinity_is_managed(data))
+			continue;
+		tomove++;
+	}
+	if (avl >= tomove)
+		goto out;
+
+	pr_warn("CPU %u has %u vectors, %u available. Cannot disable CPU\n",
+		thiscpu, tomove, avl);
+	ret = -ENOSPC;
+out:
+	raw_spin_unlock(&vector_lock);
+	return ret;
+}
+#endif /* HOTPLUG_CPU */
+#endif /* SMP */
 
 static void __init print_APIC_field(int base)
 {
