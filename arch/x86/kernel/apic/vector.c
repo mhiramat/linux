@@ -26,6 +26,7 @@
 
 struct apic_chip_data {
 	struct irq_cfg		cfg;
+	struct hlist_node	cleanup;
 	unsigned int		target_cpu;
 	unsigned int		prev_target_cpu;
 	u8			move_in_progress : 1;
@@ -37,6 +38,10 @@ static DEFINE_RAW_SPINLOCK(vector_lock);
 static cpumask_var_t vector_searchmask;
 static struct irq_chip lapic_controller;
 static struct irq_matrix *vector_matrix;
+
+#ifdef CONFIG_SMP
+static DEFINE_PER_CPU(struct hlist_head, cleanup_list);
+#endif
 
 static inline bool cpu_inmask(unsigned int cpu, const struct cpumask *msk)
 {
@@ -97,6 +102,7 @@ static struct apic_chip_data *alloc_apic_chip_data(int node)
 	if (data) {
 		data->target_cpu = NO_TARGET_CPU;
 		data->prev_target_cpu = NO_TARGET_CPU;
+		INIT_HLIST_NODE(&data->cleanup);
 	}
 	return data;
 }
@@ -240,6 +246,8 @@ static void clear_irq_vector(int irq, struct apic_chip_data *data)
 	data->move_in_progress = 0;
 	data->cfg.old_vector = 0;
 	data->prev_target_cpu = NO_TARGET_CPU;
+	/* Remove it from the cleanup list */
+	hlist_del_init(&data->cleanup);
 }
 
 void init_irq_alloc_info(struct irq_alloc_info *info,
@@ -554,8 +562,10 @@ static void __send_cleanup_vector(struct apic_chip_data *data)
 
 	raw_spin_lock(&vector_lock);
 	data->move_in_progress = 0;
-	if (cpu_inmask(cpu, cpu_online_mask))
+	if (cpu_inmask(cpu, cpu_online_mask)) {
+		hlist_add_head(&data->cleanup, per_cpu_ptr(&cleanup_list, cpu));
 		apic->send_IPI_mask(cpumask_of(cpu), IRQ_MOVE_CLEANUP_VECTOR);
+	}
 	raw_spin_unlock(&vector_lock);
 }
 
@@ -570,65 +580,40 @@ void send_cleanup_vector(struct irq_cfg *cfg)
 
 asmlinkage __visible void __irq_entry smp_irq_move_cleanup_interrupt(void)
 {
-	unsigned vector, me;
+	const struct cpumask *cpumsk = cpumask_of(smp_processor_id());
+	struct hlist_head *clhead = this_cpu_ptr(&cleanup_list);
+	struct apic_chip_data *apicd;
+	struct hlist_node *tmp;
 
 	entering_ack_irq();
-
 	/* Prevent vectors vanishing under us */
 	raw_spin_lock(&vector_lock);
 
-	me = smp_processor_id();
-	for (vector = FIRST_EXTERNAL_VECTOR; vector < NR_VECTORS; vector++) {
-		struct apic_chip_data *data;
-		struct irq_desc *desc;
-		unsigned int irr;
-
-	retry:
-		desc = __this_cpu_read(vector_irq[vector]);
-		if (IS_ERR_OR_NULL(desc))
-			continue;
-
-		if (!raw_spin_trylock(&desc->lock)) {
-			raw_spin_unlock(&vector_lock);
-			cpu_relax();
-			raw_spin_lock(&vector_lock);
-			goto retry;
-		}
-
-		data = apic_chip_data(irq_desc_get_irq_data(desc));
-		if (!data)
-			goto unlock;
+	hlist_for_each_entry_safe(apicd, tmp, clhead, cleanup) {
+		unsigned int irr, vector = apicd->cfg.old_vector;
 
 		/*
-		 * Nothing to cleanup if irq migration is in progress or
-		 * this cpu is not the target or the cleanup vector does
-		 * not match.
+		 * Check if the vector that needs to be cleaned up is
+		 * registered at the APICs IRR. If so, then this is not the
+		 * best time to clean it up. Clean it up in the next
+		 * attempt by sending another IRQ_MOVE_CLEANUP_VECTOR to
+		 * this CPU. IRQ_MOVE_CLEANUP_VECTOR is the lowest priority
+		 * external vector, so on return from this interrupt the
+		 * device interrupt will happen first.
 		 */
-		if (data->move_in_progress || me != data->prev_target_cpu ||
-		    data->cfg.vector != vector)
-			goto unlock;
-
 		irr = apic_read(APIC_IRR + (vector / 32 * 0x10));
-		/*
-		 * Check if the vector that needs to be cleanedup is
-		 * registered at the cpu's IRR. If so, then this is not
-		 * the best time to clean it up. Lets clean it up in the
-		 * next attempt by sending another IRQ_MOVE_CLEANUP_VECTOR
-		 * to myself.
-		 */
-		if (irr  & (1 << (vector % 32))) {
+		if (irr & (1U << (vector % 32))) {
 			apic->send_IPI_self(IRQ_MOVE_CLEANUP_VECTOR);
-			goto unlock;
+			continue;
 		}
+		hlist_del_init(&apicd->cleanup);
 		__this_cpu_write(vector_irq[vector], VECTOR_UNUSED);
-		data->prev_target_cpu = NO_TARGET_CPU;
-		irq_matrix_free(vector_matrix, cpumask_of(me), vector, 1);
-unlock:
-		raw_spin_unlock(&desc->lock);
+		irq_matrix_free(vector_matrix, cpumsk, vector, 1);
+		apicd->prev_target_cpu = NO_TARGET_CPU;
+		apicd->cfg.old_vector = 0;
 	}
 
 	raw_spin_unlock(&vector_lock);
-
 	exiting_irq();
 }
 
@@ -656,8 +641,8 @@ void irq_complete_move(struct irq_cfg *cfg)
  */
 void irq_force_complete_move(struct irq_desc *desc)
 {
-	struct irq_data *irqdata;
 	struct apic_chip_data *data;
+	struct irq_data *irqdata;
 	struct irq_cfg *cfg;
 	unsigned int cpu;
 
@@ -690,6 +675,9 @@ void irq_force_complete_move(struct irq_desc *desc)
 	 * calling __irq_complete_move() would be completely pointless.
 	 */
 	raw_spin_lock(&vector_lock);
+
+	/* In any case the descriptor must be removed from the cleanup list */
+	hlist_del_init(&data->cleanup);
 
 	/*
 	 * If move_in_progress is cleared and the outgoing CPU was the
