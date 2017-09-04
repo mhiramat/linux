@@ -1392,7 +1392,6 @@ void __init native_smp_cpus_done(unsigned int max_cpus)
 
 	nmi_selftest();
 	impress_friends();
-	setup_ioapic_dest();
 	mtrr_aps_init();
 }
 
