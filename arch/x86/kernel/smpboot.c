@@ -1392,7 +1392,6 @@ void __init native_smp_cpus_done(unsigned int max_cpus)
 
 	nmi_selftest();
 	impress_friends();
-	setup_ioapic_dest();
 	mtrr_aps_init();
 }
 
@@ -1557,7 +1556,7 @@ int native_cpu_disable(void)
 {
 	int ret;
 
-	ret = check_irq_vectors_for_cpu_disable();
+	ret = apic_can_unplug_cpu();
 	if (ret)
 		return ret;
 
