@@ -77,19 +77,6 @@ static size_t regs_size(struct pt_regs *regs)
 	return sizeof(*regs);
 }
 
-static bool in_entry_code(unsigned long ip)
-{
-	char *addr = (char *)ip;
-
-	if (addr >= __entry_text_start && addr < __entry_text_end)
-		return true;
-
-	if (addr >= __irqentry_text_start && addr < __irqentry_text_end)
-		return true;
-
-	return false;
-}
-
 static inline unsigned long *last_frame(struct unwind_state *state)
 {
 	return (unsigned long *)task_pt_regs(state->task) - 2;
@@ -321,7 +308,7 @@ bad_address:
 	 * Don't warn if the unwinder got lost due to an interrupt in entry
 	 * code or in the C handler before the first frame pointer got set up:
 	 */
-	if (state->got_irq && in_entry_code(state->ip))
+	if (state->got_irq && in_entry_text(state->ip))
 		goto the_end;
 	if (state->regs &&
 	    state->regs->sp >= (unsigned long)last_aligned_frame(state) &&

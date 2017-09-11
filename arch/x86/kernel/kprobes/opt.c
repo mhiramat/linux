@@ -254,10 +254,7 @@ static int can_optimize(unsigned long paddr)
 	 * Do not optimize in the entry code due to the unstable
 	 * stack handling and registers setup.
 	 */
-	if (((paddr >= (unsigned long)__entry_text_start) &&
-	     (paddr <  (unsigned long)__entry_text_end)) ||
-	    ((paddr >= (unsigned long)__irqentry_text_start) &&
-	     (paddr <  (unsigned long)__irqentry_text_end)))
+	if (in_entry_text(paddr))
 		return 0;
 
 	/* Check there is enough space for a relative jump. */
