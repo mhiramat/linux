@@ -29,4 +29,32 @@ extern char __inittext_begin[], __inittext_end[];
 extern char __irqentry_text_start[], __irqentry_text_end[];
 extern char __mmuoff_data_start[], __mmuoff_data_end[];
 
+/**
+ * in_exception_text - check if an address is in exception_text or
+ *			irqentry_text
+ * @addr: virtual address to be checked
+ *
+ * Returns: true if the address specified by @addr is in the exception_text or
+ * irqentry_text, false otherwise.
+ */
+static inline bool in_exception_text(unsigned long addr)
+{
+	return memory_contains(__exception_text_start, __exception_text_end,
+			       (void *)addr, 0) ||
+		memory_contains(__irqentry_text_start, __irqentry_text_end,
+				(void *)addr, 0);
+}
+
+/**
+ * in_entry_text - check if an address is in entry_text
+ * @addr: virtual address to be checked
+ *
+ * Returns: true if the address specified by @addr is in the entry_text,
+ * false otherwise.
+ */
+static inline bool in_entry_text(unsigned long addr)
+{
+	return memory_contains(__entry_text_start, __entry_text_end,
+			       (void *)addr, 0);
+}
 #endif /* __ASM_SECTIONS_H */
