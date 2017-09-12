@@ -1046,7 +1046,7 @@ void prepare_ftrace_return(unsigned long self_addr, unsigned long *parent,
 	}
 
 	trace.func = self_addr;
-	trace.depth = current->curr_ret_stack + 1;
+	trace.depth = task_ftrace_graph_depth(current) + 1;
 
 	/* Only trace if the calling function expects to */
 	if (!ftrace_graph_entry(&trace)) {
