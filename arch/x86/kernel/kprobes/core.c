@@ -69,7 +69,7 @@
 void jprobe_return_end(void);
 
 DEFINE_PER_CPU(struct kprobe *, current_kprobe) = NULL;
-DEFINE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
+DEFINE_PER_CPU(struct kprobe_ctlblk_array, kprobe_ctlblk_array);
 
 #define stack_addr(regs) ((unsigned long *)kernel_stack_pointer(regs))
 
@@ -514,6 +514,32 @@ restore_previous_kprobe(struct kprobe_ctlblk *kcb)
 	kcb->kprobe_saved_flags = kcb->prev_kprobe.saved_flags;
 }
 
+int push_kprobe_ctlblk(struct kprobe *next)
+{
+	struct kprobe_ctlblk_array *kcba = this_cpu_ptr(&kprobe_ctlblk_array);
+	struct kprobe_ctlblk *kcb = &kcba->kcbs[kcba->index];
+
+	if (unlikely(kcba->index == MAX_KPCB_SIZE - 1))
+		return -ENOSPC;
+	kcba->index++;
+	kcb->cur_kprobe = kprobe_running();
+	__this_cpu_write(current_kprobe, next);
+	return 0;
+}
+NOKPROBE_SYMBOL(push_kprobe_ctlblk);
+
+void pop_kprobe_ctlblk(void)
+{
+	struct kprobe_ctlblk_array *kcba = this_cpu_ptr(&kprobe_ctlblk_array);
+	struct kprobe *prev = NULL;
+
+	if (kcba->index > 0) {
+		prev = kcba->kcbs[--kcba->index].cur_kprobe;
+	}
+	__this_cpu_write(current_kprobe, prev);
+}
+NOKPROBE_SYMBOL(pop_kprobe_ctlblk);
+
 static nokprobe_inline void
 set_current_kprobe(struct kprobe *p, struct pt_regs *regs,
 		   struct kprobe_ctlblk *kcb)
@@ -566,7 +592,7 @@ static void setup_singlestep(struct kprobe *p, struct pt_regs *regs,
 	if (p->ainsn.boostable && !p->post_handler) {
 		/* Boost up -- we can execute copied instructions directly */
 		if (!reenter)
-			reset_current_kprobe();
+			pop_kprobe_ctlblk();
 		/*
 		 * Reentering boosted probe doesn't reset current_kprobe,
 		 * nor set current_kprobe, because it doesn't use single
@@ -631,6 +657,13 @@ static int reenter_kprobe(struct kprobe *p, struct pt_regs *regs,
 }
 NOKPROBE_SYMBOL(reenter_kprobe);
 
+static bool try_push_kprobe_ctlblk(struct kprobe *p, struct kprobe_ctlblk *kcb)
+{
+	if (kcb->kprobe_status != KPROBE_REENTER)
+		return !push_kprobe_ctlblk(p);
+	return false;
+}
+
 /*
  * Interrupts are disabled on entry as trap3 is an interrupt gate and they
  * remain disabled throughout this function.
@@ -657,7 +690,7 @@ int kprobe_int3_handler(struct pt_regs *regs)
 	p = get_kprobe(addr);
 
 	if (p) {
-		if (kprobe_running()) {
+		if (kprobe_running() && try_push_kprobe_ctlblk(p, kcb)) {
 			if (reenter_kprobe(p, regs, kcb))
 				return 1;
 		} else {
@@ -943,12 +976,10 @@ int kprobe_debug_handler(struct pt_regs *regs)
 	}
 
 	/* Restore back the original saved kprobes variables and continue. */
-	if (kcb->kprobe_status == KPROBE_REENTER) {
+	if (kcb->kprobe_status == KPROBE_REENTER)
 		restore_previous_kprobe(kcb);
-		goto out;
-	}
-	reset_current_kprobe();
-out:
+	else
+		pop_kprobe_ctlblk();
 	preempt_enable_no_resched();
 
 	/*
@@ -996,7 +1027,7 @@ int kprobe_fault_handler(struct pt_regs *regs, int trapnr)
 		if (kcb->kprobe_status == KPROBE_REENTER)
 			restore_previous_kprobe(kcb);
 		else
-			reset_current_kprobe();
+			pop_kprobe_ctlblk();
 		preempt_enable_no_resched();
 	} else if (kcb->kprobe_status == KPROBE_HIT_ACTIVE ||
 		   kcb->kprobe_status == KPROBE_HIT_SSDONE) {

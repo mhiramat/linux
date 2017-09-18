@@ -38,7 +38,7 @@ void __skip_singlestep(struct kprobe *p, struct pt_regs *regs,
 		kcb->kprobe_status = KPROBE_HIT_SSDONE;
 		p->post_handler(p, regs, 0);
 	}
-	__this_cpu_write(current_kprobe, NULL);
+	pop_kprobe_ctlblk();
 	if (orig_ip)
 		regs->ip = orig_ip;
 }
@@ -61,33 +61,37 @@ void kprobe_ftrace_handler(unsigned long ip, unsigned long parent_ip,
 {
 	struct kprobe *p;
 	struct kprobe_ctlblk *kcb;
+	unsigned long orig_ip;
 
 	/* Preempt is disabled by ftrace */
 	p = get_kprobe((kprobe_opcode_t *)ip);
 	if (unlikely(!p) || kprobe_disabled(p))
 		return;
 
-	kcb = get_kprobe_ctlblk();
-	if (kprobe_running()) {
+	if (kprobe_running() && push_kprobe_ctlblk(p)) {
 		kprobes_inc_nmissed_count(p);
-	} else {
-		unsigned long orig_ip = regs->ip;
-		/* Kprobe handler expects regs->ip = ip + 1 as breakpoint hit */
-		regs->ip = ip + sizeof(kprobe_opcode_t);
-
-		/* To emulate trap based kprobes, preempt_disable here */
-		preempt_disable();
-		__this_cpu_write(current_kprobe, p);
-		kcb->kprobe_status = KPROBE_HIT_ACTIVE;
-		if (!p->pre_handler || !p->pre_handler(p, regs)) {
-			__skip_singlestep(p, regs, kcb, orig_ip);
-			preempt_enable_no_resched();
-		}
-		/*
-		 * If pre_handler returns !0, it sets regs->ip and
-		 * resets current kprobe, and keep preempt count +1.
-		 */
+		return;
 	}
+
+	kcb = get_kprobe_ctlblk();
+	orig_ip = regs->ip;	/* preserve original IP */
+	/* Kprobe handler expects regs->ip = ip + 1 as breakpoint hit */
+	regs->ip = ip + sizeof(kprobe_opcode_t);
+
+	/* To emulate trap based kprobes, preempt_disable here */
+	preempt_disable();
+	__this_cpu_write(current_kprobe, p);
+	kcb->kprobe_status = KPROBE_HIT_ACTIVE;
+	if (!p->pre_handler || !p->pre_handler(p, regs)) {
+		__skip_singlestep(p, regs, kcb, orig_ip);
+		preempt_enable_no_resched();
+	}
+	/*
+	 * If pre_handler returns !0, it sets regs->ip and
+	 * resets current kprobe, but keep preempt count +1.
+	 * For the jprobe, we also have to keep current kprobe_ctlblk
+	 * because it reserves some jprobe info.
+	 */
 }
 NOKPROBE_SYMBOL(kprobe_ftrace_handler);
 

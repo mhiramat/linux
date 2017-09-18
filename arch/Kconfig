@@ -195,6 +195,9 @@ config HAVE_OPTPROBES
 config HAVE_KPROBES_ON_FTRACE
 	bool
 
+config HAVE_NESTED_KPROBES
+	bool
+
 config HAVE_NMI
 	bool
 

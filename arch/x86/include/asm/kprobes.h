@@ -48,6 +48,7 @@ typedef u8 kprobe_opcode_t;
 #define MIN_STACK_SIZE(ADDR)				\
 	(MAX_STACK_SIZE < CUR_STACK_SIZE(ADDR) ?	\
 	 MAX_STACK_SIZE : CUR_STACK_SIZE(ADDR))
+#define MAX_KPCB_SIZE 4
 
 #define flush_insn_slot(p)	do { } while (0)
 
@@ -106,6 +107,7 @@ struct prev_kprobe {
 
 /* per-cpu kprobe control block */
 struct kprobe_ctlblk {
+	struct kprobe *cur_kprobe;
 	unsigned long kprobe_status;
 	unsigned long kprobe_old_flags;
 	unsigned long kprobe_saved_flags;

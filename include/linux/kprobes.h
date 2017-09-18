@@ -213,8 +213,15 @@ struct kprobe_blacklist_entry {
 };
 
 #ifdef CONFIG_KPROBES
+#ifndef MAX_KPCB_SIZE
+#define MAX_KPCB_SIZE 1
+#endif
+struct kprobe_ctlblk_array {
+	struct kprobe_ctlblk kcbs[MAX_KPCB_SIZE];
+	int index;
+};
+
 DECLARE_PER_CPU(struct kprobe *, current_kprobe);
-DECLARE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
 
 /*
  * For #ifdef avoidance:
@@ -379,10 +386,25 @@ static inline void reset_current_kprobe(void)
 	__this_cpu_write(current_kprobe, NULL);
 }
 
+#ifdef CONFIG_HAVE_NESTED_KPROBES
+DECLARE_PER_CPU(struct kprobe_ctlblk_array, kprobe_ctlblk_array);
+static inline struct kprobe_ctlblk *get_kprobe_ctlblk(void)
+{
+	struct kprobe_ctlblk_array *kcba = this_cpu_ptr(&kprobe_ctlblk_array);
+	return &kcba->kcbs[kcba->index];
+}
+
+int push_kprobe_ctlblk(struct kprobe *kp);
+void pop_kprobe_ctlblk(void);
+#else
+DECLARE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
 static inline struct kprobe_ctlblk *get_kprobe_ctlblk(void)
 {
 	return this_cpu_ptr(&kprobe_ctlblk);
 }
+#define push_kprobe_ctlblk(kp)	(-ENOSPC)
+#define pop_kprobe_ctlblk()	reset_current_kprobe()
+#endif
 
 kprobe_opcode_t *kprobe_lookup_name(const char *name, unsigned int offset);
 int register_kprobe(struct kprobe *p);

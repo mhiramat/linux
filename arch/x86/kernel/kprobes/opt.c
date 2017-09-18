@@ -154,30 +154,34 @@ STACK_FRAME_NON_STANDARD(optprobe_template_func);
 static void
 optimized_callback(struct optimized_kprobe *op, struct pt_regs *regs)
 {
+	struct kprobe_ctlblk *kcb;
+
 	/* This is possible if op is under delayed unoptimizing */
 	if (kprobe_disabled(&op->kp))
 		return;
 
 	preempt_disable();
-	if (kprobe_running()) {
+	if (kprobe_running() && push_kprobe_ctlblk(&op->kp)) {
 		kprobes_inc_nmissed_count(&op->kp);
-	} else {
-		struct kprobe_ctlblk *kcb = get_kprobe_ctlblk();
-		/* Save skipped registers */
-#ifdef CONFIG_X86_64
-		regs->cs = __KERNEL_CS;
-#else
-		regs->cs = __KERNEL_CS | get_kernel_rpl();
-		regs->gs = 0;
-#endif
-		regs->ip = (unsigned long)op->kp.addr + INT3_SIZE;
-		regs->orig_ax = ~0UL;
-
-		__this_cpu_write(current_kprobe, &op->kp);
-		kcb->kprobe_status = KPROBE_HIT_ACTIVE;
-		opt_pre_handler(&op->kp, regs);
-		__this_cpu_write(current_kprobe, NULL);
+		goto end;
 	}
+
+	/* Save skipped registers */
+#ifdef CONFIG_X86_64
+	regs->cs = __KERNEL_CS;
+#else
+	regs->cs = __KERNEL_CS | get_kernel_rpl();
+	regs->gs = 0;
+#endif
+	regs->ip = (unsigned long)op->kp.addr + INT3_SIZE;
+	regs->orig_ax = ~0UL;
+
+	kcb = get_kprobe_ctlblk();
+	__this_cpu_write(current_kprobe, &op->kp);
+	kcb->kprobe_status = KPROBE_HIT_ACTIVE;
+	opt_pre_handler(&op->kp, regs);
+	pop_kprobe_ctlblk();
+end:
 	preempt_enable_no_resched();
 }
 NOKPROBE_SYMBOL(optimized_callback);
