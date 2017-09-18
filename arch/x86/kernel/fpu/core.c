@@ -39,7 +39,7 @@ static DEFINE_PER_CPU(bool, in_kernel_fpu);
 /*
  * Track which context is using the FPU on the CPU:
  */
-DEFINE_PER_CPU(struct fpu *, fpu_fpregs_owner_ctx);
+DEFINE_PER_CPU(struct fpu *, fpregs_owner_ctx);
 
 static void kernel_fpu_disable(void)
 {
@@ -100,7 +100,7 @@ void __kernel_fpu_begin(void)
 
 	kernel_fpu_disable();
 
-	if (fpu->fpregs_active) {
+	if (fpu->fpstate_active) {
 		/*
 		 * Ignore return value -- we don't care if reg state
 		 * is clobbered.
@@ -116,7 +116,7 @@ void __kernel_fpu_end(void)
 {
 	struct fpu *fpu = &current->thread.fpu;
 
-	if (fpu->fpregs_active)
+	if (fpu->fpstate_active)
 		copy_kernel_to_fpregs(&fpu->state);
 
 	kernel_fpu_enable();
@@ -148,7 +148,7 @@ void fpu__save(struct fpu *fpu)
 
 	preempt_disable();
 	trace_x86_fpu_before_save(fpu);
-	if (fpu->fpregs_active) {
+	if (fpu->fpstate_active) {
 		if (!copy_fpregs_to_fpstate(fpu)) {
 			copy_kernel_to_fpregs(&fpu->state);
 		}
@@ -189,8 +189,7 @@ EXPORT_SYMBOL_GPL(fpstate_init);
 
 int fpu__copy(struct fpu *dst_fpu, struct fpu *src_fpu)
 {
-	dst_fpu->fpregs_active = 0;
-	dst_fpu->last_cpu = -1;
+	dst_fpu->fpregs_owner = 0;
 
 	if (!src_fpu->fpstate_active || !static_cpu_has(X86_FEATURE_FPU))
 		return 0;
@@ -266,7 +265,7 @@ void fpu__activate_fpstate_read(struct fpu *fpu)
 	 * If fpregs are active (in the current CPU), then
 	 * copy them to the fpstate:
 	 */
-	if (fpu->fpregs_active) {
+	if (fpu->fpstate_active) {
 		fpu__save(fpu);
 	} else {
 		if (!fpu->fpstate_active) {
@@ -367,7 +366,7 @@ void fpu__current_fpstate_write_end(void)
 	 * registers may still be out of date.  Update them with
 	 * an XRSTOR if they are active.
 	 */
-	if (fpregs_active())
+	if (fpu->fpstate_active)
 		copy_kernel_to_fpregs(&fpu->state);
 
 	/*
@@ -414,12 +413,14 @@ void fpu__drop(struct fpu *fpu)
 {
 	preempt_disable();
 
-	if (fpu->fpregs_active) {
-		/* Ignore delayed exceptions from user space */
-		asm volatile("1: fwait\n"
-			     "2:\n"
-			     _ASM_EXTABLE(1b, 2b));
-		fpregs_deactivate(fpu);
+	if (fpu == &current->thread.fpu) {
+		if (fpu->fpstate_active) {
+			/* Ignore delayed exceptions from user space */
+			asm volatile("1: fwait\n"
+				     "2:\n"
+				     _ASM_EXTABLE(1b, 2b));
+			fpregs_deactivate(fpu);
+		}
 	}
 
 	fpu->fpstate_active = 0;
@@ -462,9 +463,11 @@ void fpu__clear(struct fpu *fpu)
 	 * Make sure fpstate is cleared and initialized.
 	 */
 	if (static_cpu_has(X86_FEATURE_FPU)) {
+		preempt_disable();
 		fpu__activate_curr(fpu);
 		user_fpu_begin();
 		copy_init_fpstate_to_fpregs();
+		preempt_enable();
 	}
 }
 

@@ -72,4 +72,14 @@ do {									\
 	((last) = __switch_to_asm((prev), (next)));			\
 } while (0)
 
+
+/*
+ * The task-migration arch callback clears the FPU registers cache:
+ */
+static inline void arch_task_migrate(struct task_struct *p)
+{
+	p->thread.fpu.fpregs_owner = 0;
+}
+#define arch_task_migrate arch_task_migrate
+
 #endif /* _ASM_X86_SWITCH_TO_H */
