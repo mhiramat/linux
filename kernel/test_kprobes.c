@@ -22,7 +22,7 @@
 
 #define div_factor 3
 
-static u32 rand1, preh_val, posth_val, jph_val;
+static u32 rand1, preh_val, posth_val, jph_val, nest_val;
 static int errors, handler_errors, num_tests;
 static u32 (*target)(u32 value);
 static u32 (*target2)(u32 value);
@@ -38,7 +38,15 @@ static int kp_pre_handler(struct kprobe *p, struct pt_regs *regs)
 		handler_errors++;
 		pr_err("pre-handler is preemptible\n");
 	}
-	preh_val = (rand1 / div_factor);
+	if (preh_val == 0) {
+		preh_val = (rand1 / div_factor);
+#ifdef CONFIG_HAVE_NESTED_KPROBES
+		target(rand1);
+	} else {
+		nest_val++;
+#endif
+	}
+
 	return 0;
 }
 
@@ -85,6 +93,13 @@ static int test_kprobe(void)
 		handler_errors++;
 	}
 
+#ifdef CONFIG_HAVE_NESTED_KPROBES
+	if (kp.nmissed || nest_val == 0) {
+		pr_err("kprobe nested in pre_handler not called\n");
+		handler_errors++;
+	}
+#endif
+
 	return 0;
 }
 
@@ -106,7 +121,14 @@ static void kp_post_handler2(struct kprobe *p, struct pt_regs *regs,
 		handler_errors++;
 		pr_err("incorrect value in post_handler2\n");
 	}
-	posth_val = preh_val + div_factor;
+	if (posth_val == 0) {
+		posth_val = preh_val + div_factor;
+#ifdef CONFIG_HAVE_NESTED_KPROBES
+		target2(rand1);
+	} else {
+		nest_val++;
+#endif
+	}
 }
 
 static struct kprobe kp2 = {
@@ -131,6 +153,7 @@ static int test_kprobes(void)
 
 	preh_val = 0;
 	posth_val = 0;
+	nest_val = 0;
 	ret = target(rand1);
 
 	if (preh_val == 0) {
@@ -157,6 +180,12 @@ static int test_kprobes(void)
 		handler_errors++;
 	}
 
+#ifdef CONFIG_HAVE_NESTED_KPROBES
+	if (kp2.nmissed || nest_val == 0) {
+		pr_err("kprobe nested in post_handler not called\n");
+		handler_errors++;
+	}
+#endif
 	unregister_kprobes(kps, 2);
 	return 0;
 
@@ -173,7 +202,14 @@ static u32 j_kprobe_target(u32 value)
 		pr_err("incorrect value in jprobe handler\n");
 	}
 
-	jph_val = rand1;
+	if (jph_val == 0) {
+		jph_val = rand1;
+#ifdef CONFIG_HAVE_NESTED_KPROBES
+		target(rand1);
+	} else {
+		nest_val++;
+#endif
+	}
 	jprobe_return();
 	return 0;
 }
@@ -187,6 +223,7 @@ static int test_jprobe(void)
 {
 	int ret;
 
+	nest_val = 0;
 	ret = register_jprobe(&jp);
 	if (ret < 0) {
 		pr_err("register_jprobe returned %d\n", ret);
@@ -200,6 +237,12 @@ static int test_jprobe(void)
 		handler_errors++;
 	}
 
+#ifdef CONFIG_HAVE_NESTED_KPROBES
+	if (jp.kp.nmissed || nest_val == 0) {
+		pr_err("jprobe nested in entry handler not called\n");
+		handler_errors++;
+	}
+#endif
 	return 0;
 }
 
@@ -216,6 +259,8 @@ static int test_jprobes(void)
 	/* addr and flags should be cleard for reusing kprobe. */
 	jp.kp.addr = NULL;
 	jp.kp.flags = 0;
+	jp.kp.nmissed = 0;
+	nest_val = 0;
 	ret = register_jprobes(jps, 2);
 	if (ret < 0) {
 		pr_err("register_jprobes returned %d\n", ret);
@@ -237,6 +282,13 @@ static int test_jprobes(void)
 	}
 	unregister_jprobes(jps, 2);
 
+#ifdef CONFIG_HAVE_NESTED_KPROBES
+	/* Note that only jp is nested in both case */
+	if (jp.kp.nmissed || nest_val == 0) {
+		pr_err("jprobe nested in entry handler not called(2)\n");
+		handler_errors++;
+	}
+#endif
 	return 0;
 }
 #ifdef CONFIG_KRETPROBES
@@ -255,6 +307,14 @@ static int entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 static int return_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	unsigned long ret = regs_return_value(regs);
+
+#ifdef CONFIG_HAVE_NESTED_KPROBES
+	if (jph_val == 0) {
+		jph_val = rand1;
+		target(rand1);
+	} else
+		nest_val++;
+#endif
 
 	if (preemptible()) {
 		handler_errors++;
@@ -283,6 +343,8 @@ static int test_kretprobe(void)
 {
 	int ret;
 
+	jph_val = 0;
+	nest_val = 0;
 	ret = register_kretprobe(&rp);
 	if (ret < 0) {
 		pr_err("register_kretprobe returned %d\n", ret);
@@ -296,6 +358,12 @@ static int test_kretprobe(void)
 		handler_errors++;
 	}
 
+#ifdef CONFIG_HAVE_NESTED_KPROBES
+	if (rp.kp.nmissed || nest_val == 0) {
+		pr_err("kretprobe nested in return handler not called\n");
+		handler_errors++;
+	}
+#endif
 	return 0;
 }
 
