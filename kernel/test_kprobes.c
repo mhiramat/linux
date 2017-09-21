@@ -29,6 +29,7 @@ static u32 (*target2)(u32 value);
 
 static noinline u32 kprobe_target(u32 value)
 {
+	pr_err("target function called\n");
 	return (value / div_factor);
 }
 
@@ -39,12 +40,12 @@ static int kp_pre_handler(struct kprobe *p, struct pt_regs *regs)
 		pr_err("pre-handler is preemptible\n");
 	}
 	if (preh_val == 0) {
+		pr_err("Normal pre handler called");
 		preh_val = (rand1 / div_factor);
-#ifdef CONFIG_HAVE_NESTED_KPROBES
 		target(rand1);
 	} else {
+		pr_err("Nested pre handler called");
 		nest_val++;
-#endif
 	}
 
 	return 0;
@@ -70,6 +71,20 @@ static struct kprobe kp = {
 	.post_handler = kp_post_handler
 };
 
+static void report_kprobe(struct kprobe *p)
+{
+	struct kprobe *pp;
+        preempt_disable();
+	pp = get_kprobe(p->addr);
+	preempt_enable();
+
+	pr_err("DEBUG: kprobe at %pF %s%s%s%s\n", p->addr,
+                (kprobe_gone(p) ? "[GONE]" : ""),
+                ((kprobe_disabled(p) && !kprobe_gone(p)) ?  "[DISABLED]" : ""),
+                (kprobe_optimized(pp) ? "[OPTIMIZED]" : ""),
+                (kprobe_ftrace(pp) ? "[FTRACE]" : ""));
+}
+
 static int test_kprobe(void)
 {
 	int ret;
@@ -79,6 +94,7 @@ static int test_kprobe(void)
 		pr_err("register_kprobe returned %d\n", ret);
 		return ret;
 	}
+	report_kprobe(&kp);
 
 	ret = target(rand1);
 	unregister_kprobe(&kp);
@@ -122,12 +138,12 @@ static void kp_post_handler2(struct kprobe *p, struct pt_regs *regs,
 		pr_err("incorrect value in post_handler2\n");
 	}
 	if (posth_val == 0) {
+		pr_err("Normal post handler called");
 		posth_val = preh_val + div_factor;
-#ifdef CONFIG_HAVE_NESTED_KPROBES
 		target2(rand1);
 	} else {
+		pr_err("Nested post handler called");
 		nest_val++;
-#endif
 	}
 }
 
@@ -156,6 +172,8 @@ static int test_kprobes(void)
 	nest_val = 0;
 	ret = target(rand1);
 
+	report_kprobe(&kp);
+	report_kprobe(&kp2);
 	if (preh_val == 0) {
 		pr_err("kprobe pre_handler not called\n");
 		handler_errors++;
@@ -308,7 +326,7 @@ static int return_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	unsigned long ret = regs_return_value(regs);
 
-#ifdef CONFIG_HAVE_NESTED_KPROBES
+#if 0
 	if (jph_val == 0) {
 		jph_val = rand1;
 		target(rand1);
