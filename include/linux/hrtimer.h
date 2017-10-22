@@ -184,8 +184,8 @@ struct hrtimer_cpu_base {
 	unsigned int			cpu;
 	unsigned int			active_bases;
 	unsigned int			clock_was_set_seq;
-	bool				migration_enabled;
-	bool				nohz_active;
+	unsigned int			migration_enabled	: 1,
+					nohz_active		: 1;
 #ifdef CONFIG_HIGH_RES_TIMERS
 	unsigned int			in_hrtirq	: 1,
 					hres_active	: 1,
