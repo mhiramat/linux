@@ -61,7 +61,6 @@ static bool prefer_mbim;
 module_param(prefer_mbim, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(prefer_mbim, "Prefer MBIM setting on dual NCM/MBIM functions");
 
-static void cdc_ncm_txpath_bh(unsigned long param);
 static void cdc_ncm_tx_timeout_start(struct cdc_ncm_ctx *ctx);
 static enum hrtimer_restart cdc_ncm_tx_timer_cb(struct hrtimer *hr_timer);
 static struct usb_driver cdc_ncm_driver;
@@ -777,10 +776,8 @@ int cdc_ncm_bind_common(struct usbnet *dev, struct usb_interface *intf, u8 data_
 	if (!ctx)
 		return -ENOMEM;
 
-	hrtimer_init(&ctx->tx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_init(&ctx->tx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
 	ctx->tx_timer.function = &cdc_ncm_tx_timer_cb;
-	ctx->bh.data = (unsigned long)dev;
-	ctx->bh.func = cdc_ncm_txpath_bh;
 	atomic_set(&ctx->stop, 0);
 	spin_lock_init(&ctx->mtx);
 
@@ -967,10 +964,7 @@ void cdc_ncm_unbind(struct usbnet *dev, struct usb_interface *intf)
 
 	atomic_set(&ctx->stop, 1);
 
-	if (hrtimer_active(&ctx->tx_timer))
-		hrtimer_cancel(&ctx->tx_timer);
-
-	tasklet_kill(&ctx->bh);
+	hrtimer_cancel(&ctx->tx_timer);
 
 	/* handle devices with combined control and data interface */
 	if (ctx->control == ctx->data)
@@ -1345,23 +1339,12 @@ static void cdc_ncm_tx_timeout_start(struct cdc_ncm_ctx *ctx)
 	if (!(hrtimer_active(&ctx->tx_timer) || atomic_read(&ctx->stop)))
 		hrtimer_start(&ctx->tx_timer,
 				ctx->timer_interval,
-				HRTIMER_MODE_REL);
+				HRTIMER_MODE_REL_SOFT);
 }
 
-static enum hrtimer_restart cdc_ncm_tx_timer_cb(struct hrtimer *timer)
+static void cdc_ncm_txpath_bh(struct cdc_ncm_ctx *ctx)
 {
-	struct cdc_ncm_ctx *ctx =
-			container_of(timer, struct cdc_ncm_ctx, tx_timer);
-
-	if (!atomic_read(&ctx->stop))
-		tasklet_schedule(&ctx->bh);
-	return HRTIMER_NORESTART;
-}
-
-static void cdc_ncm_txpath_bh(unsigned long param)
-{
-	struct usbnet *dev = (struct usbnet *)param;
-	struct cdc_ncm_ctx *ctx = (struct cdc_ncm_ctx *)dev->data[0];
+	struct usbnet *dev = usb_get_intfdata(ctx->control);
 
 	spin_lock_bh(&ctx->mtx);
 	if (ctx->tx_timer_pending != 0) {
@@ -1377,6 +1360,17 @@ static void cdc_ncm_txpath_bh(unsigned long param)
 	} else {
 		spin_unlock_bh(&ctx->mtx);
 	}
+}
+
+static enum hrtimer_restart cdc_ncm_tx_timer_cb(struct hrtimer *timer)
+{
+	struct cdc_ncm_ctx *ctx =
+			container_of(timer, struct cdc_ncm_ctx, tx_timer);
+
+	if (!atomic_read(&ctx->stop))
+		cdc_ncm_txpath_bh(ctx);
+
+	return HRTIMER_NORESTART;
 }
 
 struct sk_buff *
