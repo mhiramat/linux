@@ -628,7 +628,7 @@ hrtimer_force_reprogram(struct hrtimer_cpu_base *cpu_base, int skip_equal)
 	 */
 	expires_next = __hrtimer_get_next_event(cpu_base, HRTIMER_ACTIVE_ALL);
 
-	if (cpu_base->next_timer->is_soft) {
+	if (cpu_base->next_timer && cpu_base->next_timer->is_soft) {
 		if (cpu_base->softirq_activated)
 			return;
 
