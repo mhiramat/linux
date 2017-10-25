@@ -216,6 +216,7 @@ unsigned int sysctl_timer_migration = 1;
 void timers_update_migration(bool update_nohz)
 {
 	bool on = sysctl_timer_migration && tick_nohz_active;
+	struct hrtimer_cpu_base *base;
 	unsigned int cpu;
 
 	/* Avoid the loop, if nothing to update */
@@ -225,12 +226,13 @@ void timers_update_migration(bool update_nohz)
 	for_each_possible_cpu(cpu) {
 		per_cpu(timer_bases[BASE_STD].migration_enabled, cpu) = on;
 		per_cpu(timer_bases[BASE_DEF].migration_enabled, cpu) = on;
-		per_cpu(hrtimer_bases.migration_enabled, cpu) = on;
+		base = per_cpu_ptr(&hrtimer_bases, cpu);
+		base->migration_enabled = on;
 		if (!update_nohz)
 			continue;
 		per_cpu(timer_bases[BASE_STD].nohz_active, cpu) = true;
 		per_cpu(timer_bases[BASE_DEF].nohz_active, cpu) = true;
-		per_cpu(hrtimer_bases.nohz_active, cpu) = true;
+		base->nohz_active = true;
 	}
 }
 
