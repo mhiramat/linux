@@ -1020,21 +1020,25 @@ struct task_struct {
 	unsigned int			kasan_depth;
 #endif
 
-#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+#ifdef CONFIG_TASK_RETURN_STACK
 	/* Index of current stored address in ret_stack: */
 	int				curr_ret_stack;
 
 	/* Stack of return addresses for return function tracing: */
 	struct ftrace_ret_stack		*ret_stack;
 
-	/* Timestamp for last schedule: */
-	unsigned long long		ftrace_timestamp;
-
 	/*
 	 * Number of functions that haven't been traced
 	 * because of depth overrun:
 	 */
 	atomic_t			trace_overrun;
+#endif
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+	/* Index of current ftrace graph tracing ret_stack: */
+	int				ftrace_graph_depth;
+
+	/* Timestamp for last schedule: */
+	unsigned long long		ftrace_timestamp;
 
 	/* Pause tracing: */
 	atomic_t			tracing_graph_pause;

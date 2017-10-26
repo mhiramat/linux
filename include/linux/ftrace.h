@@ -853,9 +853,9 @@ extern void ftrace_graph_init_task(struct task_struct *t);
 extern void ftrace_graph_exit_task(struct task_struct *t);
 extern void ftrace_graph_init_idle_task(struct task_struct *t, int cpu);
 
-static inline int task_curr_ret_stack(struct task_struct *t)
+static inline int task_ftrace_graph_depth(struct task_struct *t)
 {
-	return t->curr_ret_stack;
+	return t->ftrace_graph_depth;
 }
 
 static inline void pause_graph_tracing(void)
@@ -883,7 +883,7 @@ static inline int register_ftrace_graph(trace_func_graph_ret_t retfunc,
 }
 static inline void unregister_ftrace_graph(void) { }
 
-static inline int task_curr_ret_stack(struct task_struct *tsk)
+static inline int task_ftrace_graph_depth(struct task_struct *tsk)
 {
 	return -1;
 }

@@ -15,33 +15,6 @@
 #include "trace.h"
 #include "trace_output.h"
 
-static bool kill_ftrace_graph;
-
-/**
- * ftrace_graph_is_dead - returns true if ftrace_graph_stop() was called
- *
- * ftrace_graph_stop() is called when a severe error is detected in
- * the function graph tracing. This function is called by the critical
- * paths of function graph to keep those paths from doing any more harm.
- */
-bool ftrace_graph_is_dead(void)
-{
-	return kill_ftrace_graph;
-}
-
-/**
- * ftrace_graph_stop - set to permanently disable function graph tracincg
- *
- * In case of an error int function graph tracing, this is called
- * to try to keep function graph tracing from causing any more harm.
- * Usually this is pretty severe and this is called to try to at least
- * get a warning out to the user.
- */
-void ftrace_graph_stop(void)
-{
-	kill_ftrace_graph = true;
-}
-
 /* When set, irq functions will be ignored */
 static int ftrace_graph_skip_irqs;
 
@@ -121,29 +94,11 @@ int
 ftrace_push_return_trace(unsigned long ret, unsigned long func, int *depth,
 			 unsigned long frame_pointer, unsigned long *retp)
 {
-	unsigned long long calltime;
-	int index;
-
-	if (unlikely(ftrace_graph_is_dead()))
-		return -EBUSY;
-
-	if (!current->ret_stack)
-		return -EBUSY;
+	struct retstack *entry;
+	int err;
 
 	/*
-	 * We must make sure the ret_stack is tested before we read
-	 * anything else.
-	 */
-	smp_rmb();
-
-	/* The return trace stack is full */
-	if (current->curr_ret_stack == FTRACE_RETFUNC_DEPTH - 1) {
-		atomic_inc(&current->trace_overrun);
-		return -EBUSY;
-	}
-
-	/*
-	 * The curr_ret_stack is an index to ftrace return stack of
+	 * The ftrace_graph_depth is an index to ftrace return stack of
 	 * current task.  Its value should be in [0, FTRACE_RETFUNC_
 	 * DEPTH) when the function graph tracer is used.  To support
 	 * filtering out specific functions, it makes the index
@@ -153,30 +108,29 @@ ftrace_push_return_trace(unsigned long ret, unsigned long func, int *depth,
 	 * from the filtered function by adding the FTRACE_NOTRACE_
 	 * DEPTH and then it'll continue to record functions normally.
 	 *
-	 * The curr_ret_stack is initialized to -1 and get increased
+	 * The ftrace_graph_depth is initialized to -1 and get increased
 	 * in this function.  So it can be less than -1 only if it was
 	 * filtered out via ftrace_graph_notrace_addr() which can be
 	 * set from set_graph_notrace file in tracefs by user.
 	 */
-	if (current->curr_ret_stack < -1)
+	if (current->ftrace_graph_depth < -1)
 		return -EBUSY;
 
 	calltime = trace_clock_local();
 
-	index = ++current->curr_ret_stack;
+	err = retstack_push(ret, func, retp, &entry);
+	if (err)
+		return err;
+
+	current->ftrace_graph_depth++;
 	if (ftrace_graph_notrace_addr(func))
-		current->curr_ret_stack -= FTRACE_NOTRACE_DEPTH;
-	barrier();
-	current->ret_stack[index].ret = ret;
-	current->ret_stack[index].func = func;
-	current->ret_stack[index].calltime = calltime;
+		current->ftrace_graph_depth -= FTRACE_NOTRACE_DEPTH;
+
+	entry->calltime = calltime;
 #ifdef HAVE_FUNCTION_GRAPH_FP_TEST
-	current->ret_stack[index].fp = frame_pointer;
+	entry->fp = frame_pointer;
 #endif
-#ifdef HAVE_FUNCTION_GRAPH_RET_ADDR_PTR
-	current->ret_stack[index].retp = retp;
-#endif
-	*depth = current->curr_ret_stack;
+	*depth = current->ftrace_graph_depth;
 
 	return 0;
 }
@@ -186,9 +140,10 @@ static void
 ftrace_pop_return_trace(struct ftrace_graph_ret *trace, unsigned long *ret,
 			unsigned long frame_pointer)
 {
+	struct retstack *entry = NULL;
 	int index;
 
-	index = current->curr_ret_stack;
+	index = current->ftrace_graph_depth;
 
 	/*
 	 * A negative index here means that it's just returned from a
@@ -201,11 +156,17 @@ ftrace_pop_return_trace(struct ftrace_graph_ret *trace, unsigned long *ret,
 		index += FTRACE_NOTRACE_DEPTH;
 
 	if (unlikely(index < 0 || index >= FTRACE_RETFUNC_DEPTH)) {
-		ftrace_graph_stop();
+		retstack_kill();
 		WARN_ON(1);
 		/* Might as well panic, otherwise we have no where to go */
 		*ret = (unsigned long)panic;
 		return;
+	}
+
+	if (retstack_peek(&entry) < 0) {
+		retstack_kill();
+		WARN_ON(1);
+		*ret = (unsigned long)panic;
 	}
 
 #ifdef HAVE_FUNCTION_GRAPH_FP_TEST
@@ -223,24 +184,26 @@ ftrace_pop_return_trace(struct ftrace_graph_ret *trace, unsigned long *ret,
 	 * Note, -mfentry does not use frame pointers, and this test
 	 *  is not needed if CC_USING_FENTRY is set.
 	 */
-	if (unlikely(current->ret_stack[index].fp != frame_pointer)) {
-		ftrace_graph_stop();
+	if (unlikely(entry->fp != frame_pointer)) {
+		retstack_kill();
 		WARN(1, "Bad frame pointer: expected %lx, received %lx\n"
 		     "  from func %ps return to %lx\n",
-		     current->ret_stack[index].fp,
-		     frame_pointer,
-		     (void *)current->ret_stack[index].func,
-		     current->ret_stack[index].ret);
+		     entry->fp, frame_pointer,
+		     (void *)entry->func, entry->ret);
 		*ret = (unsigned long)panic;
 		return;
 	}
 #endif
 
-	*ret = current->ret_stack[index].ret;
-	trace->func = current->ret_stack[index].func;
-	trace->calltime = current->ret_stack[index].calltime;
+	trace->calltime = entry->calltime;
 	trace->overrun = atomic_read(&current->trace_overrun);
 	trace->depth = index;
+
+	if (retstack_pop(ret, &trace->func)) {
+		retstack_kill();
+		WARN_ON(1);
+		*ret = (unsigned long)panic;
+	}
 }
 
 /*
@@ -255,14 +218,14 @@ unsigned long ftrace_return_to_handler(unsigned long frame_pointer)
 	ftrace_pop_return_trace(&trace, &ret, frame_pointer);
 	trace.rettime = trace_clock_local();
 	barrier();
-	current->curr_ret_stack--;
+	current->ftrace_graph_depth--;
 	/*
-	 * The curr_ret_stack can be less than -1 only if it was
+	 * The ftrace_graph_depth can be less than -1 only if it was
 	 * filtered out and it's about to return from the function.
 	 * Recover the index and continue to trace normal functions.
 	 */
-	if (current->curr_ret_stack < -1) {
-		current->curr_ret_stack += FTRACE_NOTRACE_DEPTH;
+	if (current->ftrace_graph_depth < -1) {
+		current->ftrace_graph_depth += FTRACE_NOTRACE_DEPTH;
 		return ret;
 	}
 
@@ -298,48 +261,11 @@ unsigned long ftrace_return_to_handler(unsigned long frame_pointer)
  * 'retp' is a pointer to the return address on the stack.  It's ignored if
  * the arch doesn't have HAVE_FUNCTION_GRAPH_RET_ADDR_PTR defined.
  */
-#ifdef HAVE_FUNCTION_GRAPH_RET_ADDR_PTR
 unsigned long ftrace_graph_ret_addr(struct task_struct *task, int *idx,
 				    unsigned long ret, unsigned long *retp)
 {
-	int index = task->curr_ret_stack;
-	int i;
-
-	if (ret != (unsigned long)return_to_handler)
-		return ret;
-
-	if (index < -1)
-		index += FTRACE_NOTRACE_DEPTH;
-
-	if (index < 0)
-		return ret;
-
-	for (i = 0; i <= index; i++)
-		if (task->ret_stack[i].retp == retp)
-			return task->ret_stack[i].ret;
-
-	return ret;
+	return retstack_graph_ret_addr(task, idx, ret, retp);
 }
-#else /* !HAVE_FUNCTION_GRAPH_RET_ADDR_PTR */
-unsigned long ftrace_graph_ret_addr(struct task_struct *task, int *idx,
-				    unsigned long ret, unsigned long *retp)
-{
-	int task_idx;
-
-	if (ret != (unsigned long)return_to_handler)
-		return ret;
-
-	task_idx = task->curr_ret_stack;
-
-	if (!task->ret_stack || task_idx < *idx)
-		return ret;
-
-	task_idx -= *idx;
-	(*idx)++;
-
-	return task->ret_stack[task_idx].ret;
-}
-#endif /* HAVE_FUNCTION_GRAPH_RET_ADDR_PTR */
 
 int __trace_graph_entry(struct trace_array *tr,
 				struct ftrace_graph_ent *trace,

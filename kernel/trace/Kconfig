@@ -147,6 +147,7 @@ config FUNCTION_TRACER
 
 config FUNCTION_GRAPH_TRACER
 	bool "Kernel Function Graph Tracer"
+	select TASK_RETURN_STACK
 	depends on HAVE_FUNCTION_GRAPH_TRACER
 	depends on FUNCTION_TRACER
 	depends on !X86_32 || !CC_OPTIMIZE_FOR_SIZE
