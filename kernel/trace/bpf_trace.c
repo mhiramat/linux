@@ -800,11 +800,11 @@ int perf_event_attach_bpf_prog(struct perf_event *event,
 	int ret = -EEXIST;
 
 	/*
-	 * Kprobe override only works for ftrace based kprobes, and only if they
-	 * are on the opt-in list.
+	 * Kprobe override only works if they are on the function entry,
+	 * and only if they are on the opt-in list.
 	 */
 	if (prog->kprobe_override &&
-	    (!trace_kprobe_ftrace(event->tp_event) ||
+	    (!trace_kprobe_on_func_entry(event->tp_event) ||
 	     !trace_kprobe_error_injectable(event->tp_event)))
 		return -EINVAL;
 
