@@ -333,7 +333,7 @@ static int io_ctl_init(struct btrfs_io_ctl *io_ctl, struct inode *inode,
 
 	return 0;
 }
-BPF_ALLOW_ERROR_INJECTION(io_ctl_init);
+ALLOW_ERROR_INJECTION(io_ctl_init);
 
 static void io_ctl_free(struct btrfs_io_ctl *io_ctl)
 {
