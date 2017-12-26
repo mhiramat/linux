@@ -30,6 +30,12 @@ o fail_mmc_request
   injects MMC data errors on devices permitted by setting
   debugfs entries under /sys/kernel/debug/mmc0/fail_mmc_request
 
+o fail_function
+
+  injects error return on specific functions, which are marked by
+  ALLOW_ERROR_INJECTION() macro, by setting debugfs entries
+  under /sys/kernel/debug/fail_function. No boot option supported.
+
 Configure fault-injection capabilities behavior
 -----------------------------------------------
 
@@ -122,6 +128,24 @@ configuration of fault-injection capabilities.
 	Format: { 'Y' | 'N' }
 	default is 'N', setting it to 'Y' will disable failure injections
 	when dealing with private (address space) futexes.
+
+- /sys/kernel/debug/fail_function/inject:
+
+	specifies the target function of error injection by name.
+
+- /sys/kernel/debug/fail_function/retval:
+
+	specifies the "error" return value to inject to the given
+	function.
+
+- /sys/kernel/debug/fail_function/injectable:
+
+	(read only) shows error injectable functions and what type of
+	error values can be specified. The error type will be one of
+	below;
+	- NULL:	retval must be 0.
+	- ERRNO: retval must be -1 to -MAX_ERRNO (-4096).
+	- ERR_NULL: retval must be 0 or -1 to -MAX_ERRNO (-4096).
 
 o Boot option
 
