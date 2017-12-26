@@ -30,6 +30,11 @@ o fail_mmc_request
   injects MMC data errors on devices permitted by setting
   debugfs entries under /sys/kernel/debug/mmc0/fail_mmc_request
 
+o fail_function
+
+  injects error return on specific functions by setting debugfs entries
+  under /sys/kernel/debug/fail_function. No boot option supported.
+
 Configure fault-injection capabilities behavior
 -----------------------------------------------
 
