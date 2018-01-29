@@ -266,6 +266,11 @@ int dwc3_send_gadget_ep_cmd(struct dwc3_ep *dep, unsigned cmd,
 	int			susphy = false;
 	int			ret = -EINVAL;
 
+	if (!dep->endpoint.desc) {
+		dev_err(dwc->dev, "%s: can't issue an endpoint command\n",
+				dep->name);
+		return -ESHUTDOWN;
+	}
 	/*
 	 * Synopsys Databook 2.60a states, on section 6.3.2.5.[1-8], that if
 	 * we're issuing an endpoint command, we must check if
@@ -1470,6 +1475,12 @@ int __dwc3_gadget_ep_set_halt(struct dwc3_ep *dep, int value, int protocol)
 	struct dwc3_gadget_ep_cmd_params	params;
 	struct dwc3				*dwc = dep->dwc;
 	int					ret;
+
+	if (!dep->endpoint.desc) {
+		dev_err(dwc->dev, "%s: can't queue to disabled endpoint\n",
+				dep->name);
+		return -ESHUTDOWN;
+	}
 
 	if (usb_endpoint_xfer_isoc(dep->endpoint.desc)) {
 		dev_err(dwc->dev, "%s is of Isochronous type\n", dep->name);
