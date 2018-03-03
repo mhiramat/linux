@@ -176,7 +176,6 @@ static int fei_kprobe_handler(struct kprobe *kp, struct pt_regs *regs)
 		override_function_with_return(regs);
 		/* Kprobe specific fixup */
 		reset_current_kprobe();
-		preempt_enable_no_resched();
 		return 1;
 	}
 

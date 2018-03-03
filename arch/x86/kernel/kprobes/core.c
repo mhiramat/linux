@@ -592,7 +592,6 @@ static void setup_singlestep(struct kprobe *p, struct pt_regs *regs,
 		 * stepping.
 		 */
 		regs->ip = (unsigned long)p->ainsn.insn;
-		preempt_enable_no_resched();
 		return;
 	}
 #endif
@@ -664,14 +663,6 @@ int kprobe_int3_handler(struct pt_regs *regs)
 		return 0;
 
 	addr = (kprobe_opcode_t *)(regs->ip - sizeof(kprobe_opcode_t));
-	/*
-	 * We don't want to be preempted for the entire
-	 * duration of kprobe processing. We conditionally
-	 * re-enable preemption at the end of this function,
-	 * and also in reenter_kprobe() and setup_singlestep().
-	 */
-	preempt_disable();
-
 	kcb = get_kprobe_ctlblk();
 	p = get_kprobe(addr);
 
@@ -706,7 +697,6 @@ int kprobe_int3_handler(struct pt_regs *regs)
 		 * the original instruction.
 		 */
 		regs->ip = (unsigned long)addr;
-		preempt_enable_no_resched();
 		return 1;
 	} else if (kprobe_running()) {
 		p = __this_cpu_read(current_kprobe);
@@ -717,7 +707,6 @@ int kprobe_int3_handler(struct pt_regs *regs)
 		}
 	} /* else: not a kprobe fault; let the kernel handle it */
 
-	preempt_enable_no_resched();
 	return 0;
 }
 NOKPROBE_SYMBOL(kprobe_int3_handler);
@@ -962,13 +951,10 @@ int kprobe_debug_handler(struct pt_regs *regs)
 	}
 
 	/* Restore back the original saved kprobes variables and continue. */
-	if (kcb->kprobe_status == KPROBE_REENTER) {
+	if (kcb->kprobe_status == KPROBE_REENTER)
 		restore_previous_kprobe(kcb);
-		goto out;
-	}
-	reset_current_kprobe();
-out:
-	preempt_enable_no_resched();
+	else
+		reset_current_kprobe();
 
 	/*
 	 * if somebody else is singlestepping across a probe point, flags
@@ -1016,7 +1002,6 @@ int kprobe_fault_handler(struct pt_regs *regs, int trapnr)
 			restore_previous_kprobe(kcb);
 		else
 			reset_current_kprobe();
-		preempt_enable_no_resched();
 	} else if (kcb->kprobe_status == KPROBE_HIT_ACTIVE ||
 		   kcb->kprobe_status == KPROBE_HIT_SSDONE) {
 		/*
@@ -1159,7 +1144,6 @@ int longjmp_break_handler(struct kprobe *p, struct pt_regs *regs)
 		unpause_graph_tracing();
 		*regs = kcb->jprobe_saved_regs;
 		__memcpy(saved_sp, kcb->jprobes_stack, MIN_STACK_SIZE(saved_sp));
-		preempt_enable_no_resched();
 		return 1;
 	}
 	return 0;

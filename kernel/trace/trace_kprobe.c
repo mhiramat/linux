@@ -1226,7 +1226,6 @@ kprobe_perf_func(struct trace_kprobe *tk, struct pt_regs *regs)
 		 */
 		if (orig_ip != instruction_pointer(regs)) {
 			reset_current_kprobe();
-			preempt_enable_no_resched();
 			return 1;
 		}
 		if (!ret)
