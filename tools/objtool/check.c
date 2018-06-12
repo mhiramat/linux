@@ -1945,6 +1945,14 @@ static int validate_branch(struct objtool_file *file, struct instruction *first,
 			}
 			return 0;
 
+		case INSN_PADDING:
+			if (!file->c_file) {
+				WARN_FUNC("code falls through to INT3 padding",
+					  insn->sec, insn->offset);
+				return 1;
+			}
+			break;
+
 		case INSN_STACK:
 			if (update_insn_state(insn, &state))
 				return 1;
@@ -2041,7 +2049,8 @@ static bool ignore_unreachable_insn(struct instruction *insn)
 {
 	int i;
 
-	if (insn->ignore || insn->type == INSN_NOP)
+	if (insn->ignore || insn->type == INSN_NOP ||
+	    insn->type == INSN_PADDING)
 		return true;
 
 	/*

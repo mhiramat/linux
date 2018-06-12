@@ -33,7 +33,8 @@
 #define INSN_STACK		8
 #define INSN_BUG		9
 #define INSN_NOP		10
-#define INSN_OTHER		11
+#define INSN_PADDING		11
+#define INSN_OTHER		12
 #define INSN_LAST		INSN_OTHER
 
 enum op_dest_type {
