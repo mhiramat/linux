@@ -21,8 +21,8 @@
  * barriered versions. To avoid redundant back-to-back fences, we can
  * define the _acquire and _fence versions explicitly.
  */
-#define __atomic_op_acquire(op, args...)	op##_relaxed(args)
-#define __atomic_op_fence			__atomic_op_release
+#define __op_acquire(op, args...)	op##_relaxed(args)
+#define __op_fence			__op_release
 
 #define ATOMIC_INIT(i)		{ (i) }
 #define ATOMIC64_INIT(i)	{ (i) }

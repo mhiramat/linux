@@ -25,14 +25,14 @@
 
 #define ATOMIC_INIT(i)	{ (i) }
 
-#define __atomic_op_acquire(op, args...)				\
+#define __op_acquire(op, args...)					\
 ({									\
 	typeof(op##_relaxed(args)) __ret  = op##_relaxed(args);		\
 	__asm__ __volatile__(RISCV_ACQUIRE_BARRIER "" ::: "memory");	\
 	__ret;								\
 })
 
-#define __atomic_op_release(op, args...)				\
+#define __op_release(op, args...)					\
 ({									\
 	__asm__ __volatile__(RISCV_RELEASE_BARRIER "" ::: "memory");	\
 	op##_relaxed(args);						\
@@ -153,22 +153,38 @@ ATOMIC_OPS(sub, add, +, -i)
 
 #define atomic_add_return_relaxed	atomic_add_return_relaxed
 #define atomic_sub_return_relaxed	atomic_sub_return_relaxed
+#define atomic_add_return_acquire(...)	__op_acquire(atomic_add_return, __VA_ARGS__)
+#define atomic_sub_return_acquire(...)	__op_acquire(atomic_sub_return, __VA_ARGS__)
+#define atomic_add_return_release(...)	__op_release(atomic_add_return, __VA_ARGS__)
+#define atomic_sub_return_release(...)	__op_release(atomic_sub_return, __VA_ARGS__)
 #define atomic_add_return		atomic_add_return
 #define atomic_sub_return		atomic_sub_return
 
 #define atomic_fetch_add_relaxed	atomic_fetch_add_relaxed
 #define atomic_fetch_sub_relaxed	atomic_fetch_sub_relaxed
+#define atomic_fetch_add_acquire(...)	__op_acquire(atomic_fetch_add, __VA_ARGS__)
+#define atomic_fetch_sub_acquire(...)	__op_acquire(atomic_fetch_sub, __VA_ARGS__)
+#define atomic_fetch_add_release(...)	__op_release(atomic_fetch_add, __VA_ARGS__)
+#define atomic_fetch_sub_release(...)	__op_release(atomic_fetch_sub, __VA_ARGS__)
 #define atomic_fetch_add		atomic_fetch_add
 #define atomic_fetch_sub		atomic_fetch_sub
 
 #ifndef CONFIG_GENERIC_ATOMIC64
 #define atomic64_add_return_relaxed	atomic64_add_return_relaxed
 #define atomic64_sub_return_relaxed	atomic64_sub_return_relaxed
+#define atomic64_add_return_acquire(...) __op_acquire(atomic64_add_return, __VA_ARGS__)
+#define atomic64_sub_return_acquire(...) __op_acquire(atomic64_sub_return, __VA_ARGS__)
+#define atomic64_add_return_release(...) __op_release(atomic64_add_return, __VA_ARGS__)
+#define atomic64_sub_return_release(...) __op_release(atomic64_sub_return, __VA_ARGS__)
 #define atomic64_add_return		atomic64_add_return
 #define atomic64_sub_return		atomic64_sub_return
 
 #define atomic64_fetch_add_relaxed	atomic64_fetch_add_relaxed
 #define atomic64_fetch_sub_relaxed	atomic64_fetch_sub_relaxed
+#define atomic64_fetch_add_acquire(...)	__op_acquire(atomic64_fetch_add, __VA_ARGS__)
+#define atomic64_fetch_sub_acquire(...)	__op_acquire(atomic64_fetch_sub, __VA_ARGS__)
+#define atomic64_fetch_add_release(...)	__op_release(atomic64_fetch_add, __VA_ARGS__)
+#define atomic64_fetch_sub_release(...)	__op_release(atomic64_fetch_sub, __VA_ARGS__)
 #define atomic64_fetch_add		atomic64_fetch_add
 #define atomic64_fetch_sub		atomic64_fetch_sub
 #endif
@@ -191,6 +207,12 @@ ATOMIC_OPS(xor, xor, i)
 #define atomic_fetch_and_relaxed	atomic_fetch_and_relaxed
 #define atomic_fetch_or_relaxed		atomic_fetch_or_relaxed
 #define atomic_fetch_xor_relaxed	atomic_fetch_xor_relaxed
+#define atomic_fetch_and_acquire(...)	__op_acquire(atomic_fetch_and, __VA_ARGS__)
+#define atomic_fetch_or_acquire(...)	__op_acquire(atomic_fetch_or,  __VA_ARGS__)
+#define atomic_fetch_xor_acquire(...)	__op_acquire(atomic_fetch_xor, __VA_ARGS__)
+#define atomic_fetch_and_release(...)	__op_release(atomic_fetch_and, __VA_ARGS__)
+#define atomic_fetch_or_release(...)	__op_release(atomic_fetch_or,  __VA_ARGS__)
+#define atomic_fetch_xor_release(...)	__op_release(atomic_fetch_xor, __VA_ARGS__)
 #define atomic_fetch_and		atomic_fetch_and
 #define atomic_fetch_or			atomic_fetch_or
 #define atomic_fetch_xor		atomic_fetch_xor
@@ -199,6 +221,12 @@ ATOMIC_OPS(xor, xor, i)
 #define atomic64_fetch_and_relaxed	atomic64_fetch_and_relaxed
 #define atomic64_fetch_or_relaxed	atomic64_fetch_or_relaxed
 #define atomic64_fetch_xor_relaxed	atomic64_fetch_xor_relaxed
+#define atomic64_fetch_and_acquire(...)	__op_acquire(atomic64_fetch_and, __VA_ARGS__)
+#define atomic64_fetch_or_acquire(...)	__op_acquire(atomic64_fetch_or,  __VA_ARGS__)
+#define atomic64_fetch_xor_acquire(...)	__op_acquire(atomic64_fetch_xor, __VA_ARGS__)
+#define atomic64_fetch_and_release(...)	__op_release(atomic64_fetch_and, __VA_ARGS__)
+#define atomic64_fetch_or_release(...)	__op_release(atomic64_fetch_or,  __VA_ARGS__)
+#define atomic64_fetch_xor_release(...)	__op_release(atomic64_fetch_xor, __VA_ARGS__)
 #define atomic64_fetch_and		atomic64_fetch_and
 #define atomic64_fetch_or		atomic64_fetch_or
 #define atomic64_fetch_xor		atomic64_fetch_xor
@@ -290,22 +318,38 @@ ATOMIC_OPS(dec, add, +, -1)
 
 #define atomic_inc_return_relaxed	atomic_inc_return_relaxed
 #define atomic_dec_return_relaxed	atomic_dec_return_relaxed
+#define atomic_inc_return_acquire(...)	__op_acquire(atomic_inc_return, __VA_ARGS__)
+#define atomic_dec_return_acquire(...)	__op_acquire(atomic_dec_return, __VA_ARGS__)
+#define atomic_inc_return_release(...)	__op_release(atomic_inc_return, __VA_ARGS__)
+#define atomic_dec_return_release(...)	__op_release(atomic_dec_return, __VA_ARGS__)
 #define atomic_inc_return		atomic_inc_return
 #define atomic_dec_return		atomic_dec_return
 
 #define atomic_fetch_inc_relaxed	atomic_fetch_inc_relaxed
 #define atomic_fetch_dec_relaxed	atomic_fetch_dec_relaxed
+#define atomic_fetch_inc_acquire(...)	__op_acquire(atomic_fetch_inc, __VA_ARGS__)
+#define atomic_fetch_dec_acquire(...)	__op_acquire(atomic_fetch_dec, __VA_ARGS__)
+#define atomic_fetch_inc_release(...)	__op_release(atomic_fetch_inc, __VA_ARGS__)
+#define atomic_fetch_dec_release(...)	__op_release(atomic_fetch_dec, __VA_ARGS__)
 #define atomic_fetch_inc		atomic_fetch_inc
 #define atomic_fetch_dec		atomic_fetch_dec
 
 #ifndef CONFIG_GENERIC_ATOMIC64
 #define atomic64_inc_return_relaxed	atomic64_inc_return_relaxed
 #define atomic64_dec_return_relaxed	atomic64_dec_return_relaxed
+#define atomic64_inc_return_acquire(...) __op_acquire(atomic64_inc_return, __VA_ARGS__)
+#define atomic64_dec_return_acquire(...) __op_acquire(atomic64_dec_return, __VA_ARGS__)
+#define atomic64_inc_return_release(...) __op_release(atomic64_inc_return, __VA_ARGS__)
+#define atomic64_dec_return_release(...) __op_release(atomic64_dec_return, __VA_ARGS__)
 #define atomic64_inc_return		atomic64_inc_return
 #define atomic64_dec_return		atomic64_dec_return
 
 #define atomic64_fetch_inc_relaxed	atomic64_fetch_inc_relaxed
 #define atomic64_fetch_dec_relaxed	atomic64_fetch_dec_relaxed
+#define atomic64_fetch_inc_acquire(...)	__op_acquire(atomic64_fetch_inc, __VA_ARGS__)
+#define atomic64_fetch_dec_acquire(...)	__op_acquire(atomic64_fetch_dec, __VA_ARGS__)
+#define atomic64_fetch_inc_release(...)	__op_release(atomic64_fetch_inc, __VA_ARGS__)
+#define atomic64_fetch_dec_release(...)	__op_release(atomic64_fetch_dec, __VA_ARGS__)
 #define atomic64_fetch_inc		atomic64_fetch_inc
 #define atomic64_fetch_dec		atomic64_fetch_dec
 #endif
