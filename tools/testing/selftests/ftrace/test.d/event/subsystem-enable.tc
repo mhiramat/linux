@@ -9,7 +9,6 @@ do_reset() {
 }
 
 fail() { #msg
-    do_reset
     echo $1
     exit_fail
 }
@@ -53,7 +52,5 @@ count=`cat trace | grep -v ^# | awk '{ print $5 }' | sort -u | wc -l`
 if [ $count -ne 0 ]; then
     fail "any of scheduler events should not be recorded"
 fi
-
-do_reset
 
 exit 0

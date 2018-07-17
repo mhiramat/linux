@@ -10,4 +10,3 @@ echo 1 > events/kprobes/myevent/enable
 echo > kprobe_events && exit_fail # this must fail
 echo 0 > events/kprobes/myevent/enable
 echo > kprobe_events # this must succeed
-clear_trace

@@ -37,5 +37,3 @@ echo "p:testprobe ${TARGET_FUNC}${NEXT}" > kprobe_events
 if [ "${UINT_TEST}" = yes ]; then
 ! echo "p:testprobe ${TARGET_FUNC}${OVERFLOW}" > kprobe_events
 fi
-echo > kprobe_events
-clear_trace

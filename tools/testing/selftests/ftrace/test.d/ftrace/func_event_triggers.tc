@@ -25,7 +25,6 @@ do_reset() {
 }
 
 fail() { # mesg
-    do_reset
     echo $1
     exit_fail
 }

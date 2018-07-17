@@ -45,10 +45,3 @@ echo > trace
 ( echo "forked")
 grep testprobe trace
 ! grep '_do_fork <-' trace
-
-# cleanup
-echo nop > current_tracer
-echo > set_ftrace_filter
-echo 0 > events/kprobes/testprobe/enable
-echo > kprobe_events
-echo > trace

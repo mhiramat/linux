@@ -16,16 +16,7 @@ if [ ! -f set_ftrace_filter ]; then
     exit_unsupported
 fi
 
-do_reset() {
-    reset_ftrace_filter
-    reset_tracer
-    disable_events
-    clear_trace
-    enable_tracing
-}
-
 fail() { # mesg
-    do_reset
     echo $1
     exit_fail
 }

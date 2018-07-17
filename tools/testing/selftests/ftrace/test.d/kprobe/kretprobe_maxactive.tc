@@ -35,5 +35,3 @@ echo > kprobe_events
 echo 'r10 inet_csk_accept' > kprobe_events
 grep inet_csk_accept kprobe_events
 echo > kprobe_events
-
-clear_trace

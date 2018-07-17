@@ -3,14 +3,7 @@
 # description: event trigger - test multiple histogram triggers
 # flags: instance
 
-do_reset() {
-    reset_trigger
-    echo > set_event
-    clear_trace
-}
-
 fail() { #msg
-    do_reset
     echo $1
     exit_fail
 }
@@ -61,9 +54,5 @@ grep test_hist events/sched/sched_process_exit/hist > /dev/null || \
 
 diffs=`diff events/sched/sched_process_exit/hist events/sched/sched_process_fork/hist | wc -l`
 test $diffs -eq 0 || fail "Same name histograms are not same"
-
-reset_trigger
-
-do_reset
 
 exit 0

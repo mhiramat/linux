@@ -41,5 +41,3 @@ echo 1 > events/kprobes/testprobe/enable
 echo "p:test _do_fork" >> kprobe_events
 grep -qe "testprobe.* arg1=\"test\" arg2=\"test\"" trace
 
-echo 0 > events/enable
-echo > kprobe_events

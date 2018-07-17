@@ -30,5 +30,3 @@ echo "p $FUNC" > kprobe_events
 EVENT=`grep $FUNC kprobe_events | cut -f 1 -d " " | cut -f 2 -d:`
 [ "x" != "x$EVENT" ] || exit_failure
 test -d events/$EVENT || exit_failure
-
-echo > kprobe_events

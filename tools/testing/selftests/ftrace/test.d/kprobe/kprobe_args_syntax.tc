@@ -97,5 +97,3 @@ test_badarg "${GOODREG}::${GOODTYPE}" "${GOODREG}:${BADTYPE}" \
 
 test_goodarg "\$comm:string" "+0(\$stack):string"
 test_badarg "\$comm:x64" "\$stack:string" "${GOODREG}:string"
-
-echo > kprobe_events
