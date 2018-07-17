@@ -24,9 +24,6 @@ if [ ! -f synthetic_events ]; then
     exit_unsupported
 fi
 
-reset_tracer
-do_reset
-
 echo "Test extended error support"
 echo 'hist:keys=pid:ts0=common_timestamp.usecs if comm=="ping"' > events/sched/sched_wakeup/trigger
 ! echo 'hist:keys=pid:ts0=common_timestamp.usecs if comm=="ping"' >> events/sched/sched_wakeup/trigger 2> /dev/null

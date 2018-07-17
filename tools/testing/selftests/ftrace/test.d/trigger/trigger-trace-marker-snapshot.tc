@@ -54,8 +54,6 @@ test_trace() {
     done
 }
 
-do_reset
-
 echo "Test snapshot trace_marker tigger"
 
 echo 'snapshot' > events/ftrace/print/trigger

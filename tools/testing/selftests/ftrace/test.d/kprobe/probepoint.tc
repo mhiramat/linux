@@ -30,8 +30,6 @@ if [ `printf "%x" -1 | wc -c` != 9 ]; then
   UINT_TEST=yes
 fi
 
-echo 0 > events/enable
-echo > kprobe_events
 echo "p:testprobe ${TARGET_FUNC}" > kprobe_events
 echo "p:testprobe ${TARGET}" > kprobe_events
 echo "p:testprobe ${TARGET_FUNC}${NEXT}" > kprobe_events

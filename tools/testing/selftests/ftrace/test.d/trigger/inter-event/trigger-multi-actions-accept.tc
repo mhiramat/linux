@@ -24,10 +24,6 @@ if [ ! -f synthetic_events ]; then
     exit_unsupported
 fi
 
-clear_synthetic_events
-reset_tracer
-do_reset
-
 echo "Test multiple actions on hist trigger"
 echo 'wakeup_latency u64 lat; pid_t pid' >> synthetic_events
 TRIGGER1=events/sched/sched_wakeup/trigger

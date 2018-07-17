@@ -30,9 +30,6 @@ if [ ! -f events/sched/sched_process_fork/hist ]; then
     exit_unsupported
 fi
 
-reset_tracer
-do_reset
-
 echo "Test histogram with execname modifier"
 
 echo 'hist:keys=common_pid.execname' > events/sched/sched_process_fork/trigger

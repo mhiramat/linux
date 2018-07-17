@@ -22,9 +22,6 @@ if [ ! -f available_events -o ! -f set_event -o ! -d events ]; then
     exit_unsupported
 fi
 
-reset_tracer
-do_reset
-
 echo '*:*' > set_event
 
 yield

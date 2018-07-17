@@ -32,8 +32,6 @@ fail() { # mesg
 
 SLEEP_TIME=".1"
 
-do_reset
-
 echo "Testing function probes with enabling disabling tracing:"
 
 cnt_trace() {

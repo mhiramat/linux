@@ -23,10 +23,6 @@ if [ ! -f synthetic_events ]; then
     exit_unsupported
 fi
 
-reset_tracer
-do_reset
-clear_synthetic_events
-
 echo "Test create synthetic event"
 
 echo 'waking_latency  u64 lat pid_t pid' > synthetic_events

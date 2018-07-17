@@ -23,9 +23,6 @@ if [ ! -f set_event -o ! -d events/sched ]; then
     exit_unsupported
 fi
 
-reset_tracer
-do_reset
-
 echo 'sched:*' > set_event
 
 yield

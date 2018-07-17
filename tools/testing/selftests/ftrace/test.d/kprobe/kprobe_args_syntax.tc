@@ -6,9 +6,6 @@
 
 grep "x8/16/32/64" README > /dev/null || exit_unsupported # version issue
 
-echo 0 > events/enable
-echo > kprobe_events
-
 PROBEFUNC="vfs_read"
 GOODREG=
 BADREG=

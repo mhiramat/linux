@@ -46,8 +46,6 @@ if [ ! -f events/ftrace/print/hist ]; then
     exit_unsupported
 fi
 
-do_reset
-
 echo "Test histogram kernel event to trace_marker latency histogram trigger"
 
 echo 'latency u64 lat' > synthetic_events
