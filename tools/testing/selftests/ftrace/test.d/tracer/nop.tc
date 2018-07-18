@@ -1,0 +1,21 @@
+#!/bin/sh
+# description: Test nop tracer
+
+# nop must be supported always
+grep -q "nop" available_tracers
+
+echo "nop" > current_tracer
+
+# nop provides 2 test options
+grep -q "test_nop_accept" trace_options
+grep -q "test_nop_refuse" trace_options
+
+# nop_accept always success
+echo "test_nop_accept" > trace_options
+echo "notest_nop_accept" > trace_options
+
+# nop_refuse always failed
+! echo "test_nop_refuse" > trace_options
+! echo "notest_nop_refuse" > trace_options
+
+exit 0
