@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# description: Kprobe event symbol argument
+
+[ -f kprobe_events ] || exit_unsupported # this is configurable
+
+SYMBOL="linux_proc_banner"
+
+if [ ! -f /proc/kallsyms ]; then
+  echo "Can not check the target symbol - please enable CONFIG_KALLSYMS"
+  exit_unresolved
+elif grep "$SYMBOL\$" /proc/kallsyms; then
+  echo "Linux banner is not exported - please enable CONFIG_KALLSYMS_ALL"
+  exit_unresolved
+fi
+
+: "Test get string symbol argument"
+echo "p:testprobe _do_fork arg1=@linux_proc_banner:string" > kprobe_events
+echo 1 > events/kprobes/testprobe/enable
+(echo "forked")
+echo 0 > events/kprobes/testprobe/enable
+RESULT=`grep "testprobe" trace | sed -e 's/.* arg1=\(.*\)/\1/'`
+
+RESULT=`echo $RESULT | sed -e 's/.* \((.*)\) \((.*)\) .*/\1 \2/'`
+ORIG=`cat /proc/version | sed -e 's/.* \((.*)\) \((.*)\) .*/\1 \2/'`
+test "$RESULT" = "$ORIG"
