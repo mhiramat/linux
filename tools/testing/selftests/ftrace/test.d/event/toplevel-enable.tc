@@ -13,7 +13,7 @@ fail() { #msg
 }
 
 yield() {
-    ping localhost -c 1 || sleep .001 || usleep 1 || sleep 1
+    ping 127.0.0.1 -c 1 || sleep .001 || usleep 1 || sleep 1
 }
 
 if [ ! -f available_events -o ! -f set_event -o ! -d events ]; then
