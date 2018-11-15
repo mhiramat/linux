@@ -127,6 +127,11 @@ wakeup_tracer_call(unsigned long ip, unsigned long parent_ip,
 	preempt_enable_notrace();
 }
 
+static struct fgraph_ops fgraph_wakeup_ops = {
+	.entryfunc = &wakeup_graph_entry,
+	.retfunc = &wakeup_graph_return,
+};
+
 static int register_wakeup_function(struct trace_array *tr, int graph, int set)
 {
 	int ret;
@@ -136,8 +141,7 @@ static int register_wakeup_function(struct trace_array *tr, int graph, int set)
 		return 0;
 
 	if (graph)
-		ret = register_ftrace_graph(&wakeup_graph_return,
-					    &wakeup_graph_entry);
+		ret = register_ftrace_graph(&fgraph_wakeup_ops);
 	else
 		ret = register_ftrace_function(tr->ops);
 
@@ -153,7 +157,7 @@ static void unregister_wakeup_function(struct trace_array *tr, int graph)
 		return;
 
 	if (graph)
-		unregister_ftrace_graph();
+		unregister_ftrace_graph(&fgraph_wakeup_ops);
 	else
 		unregister_ftrace_function(tr->ops);
 
