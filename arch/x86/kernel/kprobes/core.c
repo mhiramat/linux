@@ -1034,6 +1034,33 @@ bool arch_within_kprobe_blacklist(unsigned long addr)
 		 addr < (unsigned long)__entry_text_end);
 }
 
+int __init arch_populate_kprobe_blacklist(void)
+{
+	unsigned long entry;
+	int ret = 0;
+
+	for (entry = (unsigned long)__kprobes_text_start;
+	     entry < (unsigned long)__kprobes_text_end;
+	     entry += ret) {
+		ret = kprobe_add_ksym_blacklist(entry);
+		if (ret < 0)
+			return ret;
+		if (ret == 0)	/* In case of alias symbol */
+			ret = 1;
+	}
+
+	for (entry = (unsigned long)__entry_text_start;
+	     entry < (unsigned long)__entry_text_end;
+	     entry += ret) {
+		ret = kprobe_add_ksym_blacklist(entry);
+		if (ret < 0)
+			return ret;
+		if (ret == 0)	/* In case of alias symbol */
+			ret = 1;
+	}
+	return 0;
+}
+
 int __init arch_init_kprobes(void)
 {
 	return 0;
