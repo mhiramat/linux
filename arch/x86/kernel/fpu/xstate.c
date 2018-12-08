@@ -809,7 +809,7 @@ void fpu__resume_cpu(void)
  * buffer the state is.  Callers should ensure that the buffer
  * is valid.
  */
-void *__raw_xsave_addr(struct xregs_state *xsave, int xstate_feature_mask)
+static void *__raw_xsave_addr(struct xregs_state *xsave, int xstate_feature_mask)
 {
 	int feature_nr = fls64(xstate_feature_mask) - 1;
 
