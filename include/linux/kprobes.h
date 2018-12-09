@@ -40,6 +40,7 @@
 #include <linux/rcupdate.h>
 #include <linux/mutex.h>
 #include <linux/ftrace.h>
+#include <linux/xarray.h>
 #include <asm/kprobes.h>
 
 #ifdef CONFIG_KPROBES
@@ -335,8 +336,6 @@ extern int arch_prepare_kprobe_ftrace(struct kprobe *p);
 #endif
 
 int arch_check_ftrace_location(struct kprobe *p);
-
-/* Get the kprobe at this addr (if any) - called with preemption disabled */
 struct kprobe *get_kprobe(void *addr);
 void kretprobe_hash_lock(struct task_struct *tsk,
 			 struct hlist_head **head, unsigned long *flags);
