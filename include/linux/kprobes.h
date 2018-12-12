@@ -337,6 +337,7 @@ extern int arch_prepare_kprobe_ftrace(struct kprobe *p);
 
 int arch_check_ftrace_location(struct kprobe *p);
 struct kprobe *get_kprobe(void *addr);
+struct kprobe *get_kprobe_cached(void *addr);
 void kretprobe_hash_lock(struct task_struct *tsk,
 			 struct hlist_head **head, unsigned long *flags);
 void kretprobe_hash_unlock(struct task_struct *tsk, unsigned long *flags);

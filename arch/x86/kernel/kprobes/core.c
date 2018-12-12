@@ -669,7 +669,7 @@ int kprobe_int3_handler(struct pt_regs *regs)
 	 */
 
 	kcb = get_kprobe_ctlblk();
-	p = get_kprobe(addr);
+	p = get_kprobe_cached(addr);
 
 	if (p) {
 		if (kprobe_running()) {

@@ -33,7 +33,7 @@ void kprobe_ftrace_handler(unsigned long ip, unsigned long parent_ip,
 	struct kprobe_ctlblk *kcb;
 
 	/* Preempt is disabled by ftrace */
-	p = get_kprobe((kprobe_opcode_t *)ip);
+	p = get_kprobe_cached((kprobe_opcode_t *)ip);
 	if (unlikely(!p) || kprobe_disabled(p))
 		return;
 

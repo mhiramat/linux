@@ -89,6 +89,101 @@ static raw_spinlock_t *kretprobe_table_lock_ptr(unsigned long hash)
 /* Blacklist -- list of struct kprobe_blacklist_entry */
 static LIST_HEAD(kprobe_blacklist);
 
+/* Kprobe cache -- software defined 4 way set associative cache */
+#define KPCACHE_BITS	2
+#define KPCACHE_SIZE	(1 << KPCACHE_BITS)
+#define KPCACHE_INDEX(i)	((i) & (KPCACHE_SIZE - 1))
+#define KPCACHE_INVALID_ADDR	(-1UL)
+
+struct kprobe_cache_entry {
+	unsigned long addr;
+	struct kprobe *kp;
+};
+
+struct kprobe_cache {
+	struct kprobe_cache_entry table[KPROBE_TABLE_SIZE][KPCACHE_SIZE];
+	int index[KPROBE_TABLE_SIZE];
+};
+
+static DEFINE_PER_CPU(struct kprobe_cache, kpcache);
+
+static inline
+struct kprobe *kpcache_get(unsigned long hash, unsigned long addr)
+{
+	struct kprobe_cache *cache = this_cpu_ptr(&kpcache);
+	struct kprobe_cache_entry *ent = &cache->table[hash][0];
+	struct kprobe *ret = NULL;
+	int i, idx;
+
+retry:
+	idx = READ_ONCE(cache->index[hash]);
+	for (i = 0; i < KPCACHE_SIZE; i++)
+		if (ent[i].addr == addr) {
+			/* Save the current value */
+			ret = READ_ONCE(ent[i].kp);
+			break;
+		}
+	barrier();
+	/* Retry if the cache is updated */
+	if (unlikely(idx != READ_ONCE(cache->index[hash])))
+		goto retry;
+
+	return ret;
+}
+
+static inline void kpcache_set(unsigned long hash, unsigned long addr,
+				struct kprobe *kp)
+{
+	struct kprobe_cache *cache = this_cpu_ptr(&kpcache);
+	struct kprobe_cache_entry *ent = &cache->table[hash][0];
+	int i = KPCACHE_INDEX(cache->index[hash]++);
+
+	/* Someone is updating this entry */
+	if (unlikely(READ_ONCE(ent[i].addr) == KPCACHE_INVALID_ADDR))
+		return;
+	/*
+	 * Setting must be done in this order for avoiding interruption;
+	 * (1)invalidate entry, (2)set the value, and (3)enable entry.
+	 */
+	ent[i].addr = KPCACHE_INVALID_ADDR;
+	barrier();
+	ent[i].kp = kp;
+	barrier();
+	ent[i].addr = addr;
+}
+
+static void kpcache_invalidate_this_cpu(void *addr)
+{
+	unsigned long hash = hash_ptr(addr, KPROBE_HASH_BITS);
+	struct kprobe_cache *cache = this_cpu_ptr(&kpcache);
+	struct kprobe_cache_entry *ent = &cache->table[hash][0];
+	int i;
+
+	for (i = 0; i < KPCACHE_SIZE; i++)
+		if (ent[i].addr == (unsigned long)addr) {
+			ent[i].addr = 0;
+			/* Disturb the round-robin for better utilization */
+			i += KPCACHE_SIZE - KPCACHE_INDEX(cache->index[hash]);
+			cache->index[hash] += i; /* Update cache index */
+		}
+}
+
+/* This must be called after ensuring the kprobe is removed from hlist */
+static void kpcache_invalidate(unsigned long addr)
+{
+	on_each_cpu(kpcache_invalidate_this_cpu, (void *)addr, 1);
+	/*
+	 * Here is a trick. Normally, we need another synchronize_rcu() here,
+	 * but all kpcache users are called from arch-dependent kprobe handler
+	 * which runs as an interrupt handler. Since kpcache invalidation is
+	 * done in IPI handler on each processor, kprobe handlers have left
+	 * from the cached kprobe at this point. Note that kpcache_invalidate()
+	 * waits for finishing IPIs, all kprobes before running IPI have done,
+	 * and the kprobes after the IPI can not access invalideted data.
+	 * So it is already safe to release them beyond this point.
+	 */
+}
+
 #ifdef __ARCH_WANT_KPROBES_INSN_SLOT
 /*
  * kprobe->ainsn.insn points to the copy of the instruction to be
@@ -340,6 +435,24 @@ struct kprobe *get_kprobe(void *addr)
 {
 	return xa_load(&kprobe_xarray, (unsigned long)addr);
 }
+NOKPROBE_SYMBOL(get_kprobe);
+
+/* This must be called under preempt disabled */
+struct kprobe *get_kprobe_cached(void *addr)
+{
+	unsigned long hash = hash_ptr(addr, KPROBE_HASH_BITS);
+	struct kprobe *p;
+
+	p = kpcache_get(hash, (unsigned long)addr);
+	if (likely(p))
+		return p;
+
+	p = get_kprobe(addr);
+	if (likely(p))
+		kpcache_set(hash, (unsigned long)addr, p);
+	return p;
+}
+NOKPROBE_SYMBOL(get_kprobe_cached);
 
 static int aggr_pre_handler(struct kprobe *p, struct pt_regs *regs);
 
@@ -547,6 +660,7 @@ static void do_free_cleaned_kprobes(void)
 			 */
 			continue;
 		}
+		kpcache_invalidate((unsigned long)op->kp.addr);
 		free_aggr_kprobe(&op->kp);
 	}
 }
@@ -1711,13 +1825,15 @@ static void __unregister_kprobe_bottom(struct kprobe *p)
 {
 	struct kprobe *ap;
 
-	if (list_empty(&p->list))
+	if (list_empty(&p->list)) {
 		/* This is an independent kprobe */
+		kpcache_invalidate((unsigned long)p->addr);
 		arch_remove_kprobe(p);
-	else if (list_is_singular(&p->list)) {
+	} else if (list_is_singular(&p->list)) {
 		/* This is the last child of an aggrprobe */
 		ap = list_entry(p->list.next, struct kprobe, list);
 		list_del(&p->list);
+		kpcache_invalidate((unsigned long)p->addr);
 		free_aggr_kprobe(ap);
 	}
 	/* Otherwise, do nothing. */
