@@ -6277,7 +6277,8 @@ __ftrace_ops_list_func(unsigned long ip, unsigned long parent_ip,
 		 * If any of the above fails then the op->func() is not executed.
 		 */
 		if ((!(op->flags & FTRACE_OPS_FL_RCU) || rcu_is_watching()) &&
-		    ftrace_ops_test(op, ip, regs)) {
+		    (op->flags & FTRACE_OPS_FL_SELF_FILTER ||
+		     ftrace_ops_test(op, ip, regs))) {
 			if (FTRACE_WARN_ON(!op->func)) {
 				pr_warn("op=%p %pS\n", op, op);
 				goto out;
