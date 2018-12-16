@@ -487,6 +487,43 @@ bool arch_within_kprobe_blacklist(unsigned long addr)
 	return false;
 }
 
+int __init arch_populate_kprobe_blacklist(void)
+{
+	struct exception_table_entry *ent;
+	int ret;
+
+	ret = kprobe_add_area_blacklist((unsigned long)__kprobes_text_start,
+					(unsigned long)__kprobes_text_end);
+	if (ret)
+		return ret;
+	ret = kprobe_add_area_blacklist((unsigned long)__entry_text_start,
+					(unsigned long)__entry_text_end);
+	if (ret)
+		return ret;
+	ret = kprobe_add_area_blacklist((unsigned long)__idmap_text_start,
+					(unsigned long)__idmap_text_end);
+	if (ret)
+		return ret;
+	ret = kprobe_add_area_blacklist((unsigned long)__exception_text_start,
+					(unsigned long)__exception_text_end);
+	if (ret)
+		return ret;
+	ret = kprobe_add_area_blacklist((unsigned long)__irqentry_text_start,
+					(unsigned long)__irqentry_text_end);
+	if (ret)
+		return ret;
+
+	if (is_kernel_in_hyp_mode())
+		return 0;
+
+	ret = kprobe_add_area_blacklist((unsigned long)__hyp_text_start,
+					(unsigned long)__hyp_text_end);
+	if (ret)
+		return ret;
+	return kprobe_add_area_blacklist((unsigned long)__hyp_idmap_text_start,
+					 (unsigned long)__hyp_idmap_text_end);
+}
+
 void __kprobes __used *trampoline_probe_handler(struct pt_regs *regs)
 {
 	struct kretprobe_instance *ri = NULL;
