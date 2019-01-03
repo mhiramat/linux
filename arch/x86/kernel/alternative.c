@@ -764,8 +764,8 @@ int poke_int3_handler(struct pt_regs *regs)
 	regs->ip = (unsigned long) bp_int3_handler;
 
 	return 1;
-
 }
+NOKPROBE_SYMBOL(poke_int3_handler);
 
 /**
  * text_poke_bp() -- update instructions on live kernel on SMP
