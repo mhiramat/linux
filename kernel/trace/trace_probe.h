@@ -88,6 +88,7 @@ enum fetch_op {
 	FETCH_OP_COMM,		/* Current comm */
 	FETCH_OP_ARG,		/* Function argument : .param */
 	FETCH_OP_FOFFS,		/* File offset: .immediate */
+	FETCH_OP_DATA,		/* Allocated data: .data */
 	// Stage 2 (dereference) op
 	FETCH_OP_DEREF,		/* Dereference: .offset */
 	// Stage 3 (store) ops
