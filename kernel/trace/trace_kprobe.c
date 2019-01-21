@@ -143,6 +143,12 @@ static nokprobe_inline unsigned long trace_kprobe_nhit(struct trace_kprobe *tk)
 	return nhit;
 }
 
+static nokprobe_inline bool trace_kprobe_is_registered(struct trace_kprobe *tk)
+{
+	return !(list_empty(&tk->rp.kp.list) &&
+		 hlist_unhashed(&tk->rp.kp.hlist));
+}
+
 /* Return 0 if it fails to find the symbol address */
 static nokprobe_inline
 unsigned long trace_kprobe_address(struct trace_kprobe *tk)
@@ -231,6 +237,8 @@ static struct trace_kprobe *alloc_trace_kprobe(const char *group,
 		tk->rp.kp.pre_handler = kprobe_dispatcher;
 
 	tk->rp.maxactive = maxactive;
+	INIT_HLIST_NODE(&tk->rp.kp.hlist);
+	INIT_LIST_HEAD(&tk->rp.kp.list);
 
 	ret = trace_probe_init(&tk->tp, event, group);
 	if (ret < 0)
@@ -260,7 +268,7 @@ static inline int __enable_trace_kprobe(struct trace_kprobe *tk)
 {
 	int ret = 0;
 
-	if (trace_probe_is_registered(&tk->tp) && !trace_kprobe_has_gone(tk)) {
+	if (trace_kprobe_is_registered(tk) && !trace_kprobe_has_gone(tk)) {
 		if (trace_kprobe_is_return(tk))
 			ret = enable_kretprobe(&tk->rp);
 		else
@@ -321,7 +329,7 @@ disable_trace_kprobe(struct trace_kprobe *tk, struct trace_event_file *file)
 	} else
 		trace_probe_clear_flag(tp, TP_FLAG_PROFILE);
 
-	if (!trace_probe_is_enabled(tp) && trace_probe_is_registered(tp)) {
+	if (!trace_probe_is_enabled(tp) && trace_kprobe_is_registered(tk)) {
 		if (trace_kprobe_is_return(tk))
 			disable_kretprobe(&tk->rp);
 		else
@@ -369,7 +377,7 @@ static int __register_trace_kprobe(struct trace_kprobe *tk)
 {
 	int i, ret;
 
-	if (trace_probe_is_registered(&tk->tp))
+	if (trace_kprobe_is_registered(tk))
 		return -EINVAL;
 
 	if (within_notrace_func(tk)) {
@@ -395,9 +403,7 @@ static int __register_trace_kprobe(struct trace_kprobe *tk)
 	else
 		ret = register_kprobe(&tk->rp.kp);
 
-	if (ret == 0) {
-		trace_probe_set_flag(&tk->tp, TP_FLAG_REGISTERED);
-	} else if (ret == -EILSEQ) {
+	if (ret == -EILSEQ) {
 		pr_warn("Probing address(0x%p) is not an instruction boundary.\n",
 			tk->rp.kp.addr);
 		ret = -EINVAL;
@@ -408,13 +414,14 @@ static int __register_trace_kprobe(struct trace_kprobe *tk)
 /* Internal unregister function - just handle k*probes and flags */
 static void __unregister_trace_kprobe(struct trace_kprobe *tk)
 {
-	if (trace_probe_is_registered(&tk->tp)) {
+	if (trace_kprobe_is_registered(tk)) {
 		if (trace_kprobe_is_return(tk))
 			unregister_kretprobe(&tk->rp);
 		else
 			unregister_kprobe(&tk->rp.kp);
-		trace_probe_clear_flag(&tk->tp, TP_FLAG_REGISTERED);
-		/* Cleanup kprobe for reuse */
+		/* Cleanup kprobe for reuse and mark it unregistered */
+		INIT_HLIST_NODE(&tk->rp.kp.hlist);
+		INIT_LIST_HEAD(&tk->rp.kp.list);
 		if (tk->rp.kp.symbol_name)
 			tk->rp.kp.addr = NULL;
 	}
