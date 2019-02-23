@@ -872,6 +872,14 @@ fetch_store_strlen(unsigned long addr)
 	return (ret < 0) ? ret : len;
 }
 
+/* Return the length of string -- including null terminal byte */
+static nokprobe_inline int
+fetch_store_strlen_user(unsigned long addr)
+{
+	return strnlen_unsafe_user((__force const void __user *)addr,
+				   MAX_STRING_SIZE);
+}
+
 /*
  * Fetch a null-terminated string. Caller MUST set *(u32 *)buf with max
  * length and relative data location.
@@ -890,6 +898,27 @@ fetch_store_string(unsigned long addr, void *dest, void *base)
 	 * probing.
 	 */
 	ret = strncpy_from_unsafe(dst, (void *)addr, maxlen);
+
+	if (ret >= 0)
+		*(u32 *)dest = make_data_loc(ret, (void *)dst - base);
+	return ret;
+}
+
+/*
+ * Fetch a null-terminated string from user. Caller MUST set *(u32 *)buf
+ * with max length and relative data location.
+ */
+static nokprobe_inline int
+fetch_store_string_user(unsigned long addr, void *dest, void *base)
+{
+	int maxlen = get_loc_len(*(u32 *)dest);
+	u8 *dst = get_loc_data(dest, base);
+	long ret;
+
+	if (unlikely(!maxlen))
+		return -ENOMEM;
+	ret = strncpy_from_unsafe_user(dst, (__force const void __user *)addr,
+				       maxlen);
 
 	if (ret >= 0)
 		*(u32 *)dest = make_data_loc(ret, (void *)dst - base);
