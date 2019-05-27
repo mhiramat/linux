@@ -276,6 +276,12 @@ static inline const char *trace_probe_group_name(struct trace_probe *tp)
 	return tp->call.class->system;
 }
 
+static inline struct trace_event_call *
+	trace_probe_event_call(struct trace_probe *tp)
+{
+	return &tp->call;
+}
+
 int trace_probe_init(struct trace_probe *tp, const char *event,
 		     const char *group);
 void trace_probe_cleanup(struct trace_probe *tp);

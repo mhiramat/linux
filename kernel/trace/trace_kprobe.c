@@ -987,7 +987,7 @@ __kprobe_trace_func(struct trace_kprobe *tk, struct pt_regs *regs,
 	struct ring_buffer *buffer;
 	int size, dsize, pc;
 	unsigned long irq_flags;
-	struct trace_event_call *call = &tk->tp.call;
+	struct trace_event_call *call = trace_probe_event_call(&tk->tp);
 
 	WARN_ON(call != trace_file->event_call);
 
@@ -1035,7 +1035,7 @@ __kretprobe_trace_func(struct trace_kprobe *tk, struct kretprobe_instance *ri,
 	struct ring_buffer *buffer;
 	int size, pc, dsize;
 	unsigned long irq_flags;
-	struct trace_event_call *call = &tk->tp.call;
+	struct trace_event_call *call = trace_probe_event_call(&tk->tp);
 
 	WARN_ON(call != trace_file->event_call);
 
@@ -1165,7 +1165,7 @@ static int kretprobe_event_define_fields(struct trace_event_call *event_call)
 static int
 kprobe_perf_func(struct trace_kprobe *tk, struct pt_regs *regs)
 {
-	struct trace_event_call *call = &tk->tp.call;
+	struct trace_event_call *call = trace_probe_event_call(&tk->tp);
 	struct kprobe_trace_entry_head *entry;
 	struct hlist_head *head;
 	int size, __size, dsize;
@@ -1215,7 +1215,7 @@ static void
 kretprobe_perf_func(struct trace_kprobe *tk, struct kretprobe_instance *ri,
 		    struct pt_regs *regs)
 {
-	struct trace_event_call *call = &tk->tp.call;
+	struct trace_event_call *call = trace_probe_event_call(&tk->tp);
 	struct kretprobe_trace_entry_head *entry;
 	struct hlist_head *head;
 	int size, __size, dsize;
@@ -1350,9 +1350,10 @@ static struct trace_event_functions kprobe_funcs = {
 	.trace		= print_kprobe_event
 };
 
-static inline void init_trace_event_call(struct trace_kprobe *tk,
-					 struct trace_event_call *call)
+static inline void init_trace_event_call(struct trace_kprobe *tk)
 {
+	struct trace_event_call *call = trace_probe_event_call(&tk->tp);
+
 	if (trace_kprobe_is_return(tk)) {
 		call->event.funcs = &kretprobe_funcs;
 		call->class->define_fields = kretprobe_event_define_fields;
@@ -1368,7 +1369,7 @@ static inline void init_trace_event_call(struct trace_kprobe *tk,
 
 static int register_kprobe_event(struct trace_kprobe *tk)
 {
-	init_trace_event_call(tk, &tk->tp.call);
+	init_trace_event_call(tk);
 
 	return trace_probe_register_event_call(&tk->tp);
 }
@@ -1405,7 +1406,7 @@ create_local_trace_kprobe(char *func, void *addr, unsigned long offs,
 		return ERR_CAST(tk);
 	}
 
-	init_trace_event_call(tk, &tk->tp.call);
+	init_trace_event_call(tk);
 
 	if (traceprobe_set_print_fmt(&tk->tp, trace_kprobe_is_return(tk)) < 0) {
 		ret = -ENOMEM;
@@ -1416,7 +1417,7 @@ create_local_trace_kprobe(char *func, void *addr, unsigned long offs,
 	if (ret < 0)
 		goto error;
 
-	return &tk->tp.call;
+	return trace_probe_event_call(&tk->tp);
 error:
 	free_trace_kprobe(tk);
 	return ERR_PTR(ret);
@@ -1525,7 +1526,7 @@ find_trace_probe_file(struct trace_kprobe *tk, struct trace_array *tr)
 	struct trace_event_file *file;
 
 	list_for_each_entry(file, &tr->events, list)
-		if (file->event_call == &tk->tp.call)
+		if (file->event_call == trace_probe_event_call(&tk->tp))
 			return file;
 
 	return NULL;
