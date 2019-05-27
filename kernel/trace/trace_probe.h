@@ -257,6 +257,15 @@ static inline int trace_probe_unregister_event_call(struct trace_probe *tp)
 	/* tp->event is unregistered in trace_remove_event_call() */
 	return trace_remove_event_call(&tp->call);
 }
+int trace_probe_add_file(struct trace_probe *tp, struct trace_event_file *file);
+int trace_probe_remove_file(struct trace_probe *tp,
+			    struct trace_event_file *file);
+int trace_probe_check_last_file(struct trace_probe *tp,
+				struct trace_event_file *file);
+#define trace_probe_for_each_link(pos, tp)	\
+	list_for_each_entry(pos, &(tp)->files, list)
+#define trace_probe_for_each_link_rcu(pos, tp)	\
+	list_for_each_entry_rcu(pos, &(tp)->files, list)
 
 /* Check the name is good for event/group/fields */
 static inline bool is_good_name(const char *name)
@@ -268,18 +277,6 @@ static inline bool is_good_name(const char *name)
 			return false;
 	}
 	return true;
-}
-
-static inline struct event_file_link *
-find_event_file_link(struct trace_probe *tp, struct trace_event_file *file)
-{
-	struct event_file_link *link;
-
-	list_for_each_entry(link, &tp->files, list)
-		if (link->file == file)
-			return link;
-
-	return NULL;
 }
 
 #define TPARG_FL_RETURN BIT(0)

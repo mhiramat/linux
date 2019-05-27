@@ -936,3 +936,51 @@ int trace_probe_register_event_call(struct trace_probe *tp)
 
 	return ret;
 }
+
+int trace_probe_add_file(struct trace_probe *tp, struct trace_event_file *file)
+{
+	struct event_file_link *link = kmalloc(sizeof(*link), GFP_KERNEL);
+
+	if (!link)
+		return -ENOMEM;
+
+	link->file = file;
+	INIT_LIST_HEAD(&link->list);
+	list_add_tail_rcu(&link->list, &tp->files);
+	tp->flags |= TP_FLAG_TRACE;
+	return 0;
+}
+
+int trace_probe_remove_file(struct trace_probe *tp,
+			    struct trace_event_file *file)
+{
+	struct event_file_link *link;
+
+	trace_probe_for_each_link(link, tp)
+		if (link->file == file)
+			goto found;
+
+	return -ENOENT;
+found:
+	list_del_rcu(&link->list);
+	synchronize_rcu();
+	kfree(link);
+
+	if (list_empty(&tp->files))
+		tp->flags &= ~TP_FLAG_TRACE;
+	return 0;
+}
+
+int trace_probe_check_last_file(struct trace_probe *tp,
+				struct trace_event_file *file)
+{
+	struct event_file_link *link;
+
+	trace_probe_for_each_link(link, tp)
+		if (link->file == file)
+			goto found;
+
+	return -ENOENT;
+found:
+	return list_is_singular(&tp->files) ? 1 : 0;
+}
