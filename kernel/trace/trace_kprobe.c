@@ -465,6 +465,10 @@ static void __unregister_trace_kprobe(struct trace_kprobe *tk)
 /* Unregister a trace_probe and probe_event */
 static int unregister_trace_kprobe(struct trace_kprobe *tk)
 {
+	/* If other probes are on the event, just unregister kprobe */
+	if (trace_probe_has_sibling(&tk->tp))
+		goto unreg;
+
 	/* Enabled event can not be unregistered */
 	if (trace_probe_is_enabled(&tk->tp))
 		return -EBUSY;
@@ -473,10 +477,45 @@ static int unregister_trace_kprobe(struct trace_kprobe *tk)
 	if (unregister_kprobe_event(tk))
 		return -EBUSY;
 
+unreg:
 	__unregister_trace_kprobe(tk);
 	dyn_event_remove(&tk->devent);
+	trace_probe_unlink(&tk->tp);
 
 	return 0;
+}
+
+static int append_trace_kprobe(struct trace_kprobe *tk, struct trace_kprobe *to)
+{
+	int ret;
+
+	/* Append to existing event */
+	ret = trace_probe_append(&tk->tp, &to->tp);
+	if (ret)
+		return ret;
+
+	/* Register k*probe */
+	ret = __register_trace_kprobe(tk);
+	if (ret == -ENOENT && !trace_kprobe_module_exist(tk)) {
+		pr_warn("This probe might be able to register after target module is loaded. Continue.\n");
+		ret = 0;
+	}
+
+	if (ret)
+		trace_probe_unlink(&tk->tp);
+	else
+		dyn_event_add(&tk->devent);
+
+	return ret;
+}
+
+static bool trace_kprobe_same_type(struct trace_kprobe *a,
+				   struct trace_kprobe *b)
+{
+	if (trace_kprobe_is_return(a) != trace_kprobe_is_return(b))
+		return false;
+
+	return trace_probe_same_arg_type(&a->tp, &b->tp);
 }
 
 /* Register a trace_probe and probe_event */
@@ -487,14 +526,14 @@ static int register_trace_kprobe(struct trace_kprobe *tk)
 
 	mutex_lock(&event_mutex);
 
-	/* Delete old (same name) event if exist */
 	old_tk = find_trace_kprobe(trace_probe_name(&tk->tp),
 				   trace_probe_group_name(&tk->tp));
 	if (old_tk) {
-		ret = unregister_trace_kprobe(old_tk);
-		if (ret < 0)
-			goto end;
-		free_trace_kprobe(old_tk);
+		if (trace_kprobe_same_type(tk, old_tk))
+			ret = append_trace_kprobe(tk, old_tk);
+		else
+			ret = -EEXIST;
+		goto end;
 	}
 
 	/* Register new event */

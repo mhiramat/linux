@@ -886,6 +886,35 @@ int traceprobe_define_arg_fields(struct trace_event_call *event_call,
 	return 0;
 }
 
+static void trace_probe_event_free(struct trace_probe_event *tpe)
+{
+	kfree(tpe->class.system);
+	kfree(tpe->call.name);
+	kfree(tpe->call.print_fmt);
+	kfree(tpe);
+}
+
+int trace_probe_append(struct trace_probe *tp, struct trace_probe *to)
+{
+	if (trace_probe_has_sibling(tp))
+		return -EBUSY;
+
+	list_del_init(&tp->list);
+	trace_probe_event_free(tp->event);
+
+	tp->event = to->event;
+	list_add_tail(&tp->list, trace_probe_probe_list(to));
+
+	return 0;
+}
+
+void trace_probe_unlink(struct trace_probe *tp)
+{
+	list_del_init(&tp->list);
+	if (list_empty(trace_probe_probe_list(tp)))
+		trace_probe_event_free(tp->event);
+	tp->event = NULL;
+}
 
 void trace_probe_cleanup(struct trace_probe *tp)
 {
@@ -894,15 +923,8 @@ void trace_probe_cleanup(struct trace_probe *tp)
 	for (i = 0; i < tp->nr_args; i++)
 		traceprobe_free_probe_arg(&tp->args[i]);
 
-	if (tp->event) {
-		struct trace_event_call *call = trace_probe_event_call(tp);
-
-		kfree(tp->event->class.system);
-		kfree(call->name);
-		kfree(call->print_fmt);
-		kfree(tp->event);
-		tp->event = NULL;
-	}
+	if (tp->event)
+		trace_probe_unlink(tp);
 }
 
 int trace_probe_init(struct trace_probe *tp, const char *event,
@@ -1006,4 +1028,21 @@ int trace_probe_check_last_file(struct trace_probe *tp,
 	return -ENOENT;
 found:
 	return list_is_singular(&tp->event->files) ? 1 : 0;
+}
+
+bool trace_probe_same_arg_type(struct trace_probe *a, struct trace_probe *b)
+{
+	int i;
+
+	if (a->size != b->size || a->nr_args != b->nr_args)
+		return false;
+
+	for (i = 0; i < a->nr_args; i++) {
+		if ((a->args[i].type != b->args[i].type) ||
+		    (a->args[i].count != b->args[i].count) ||
+		    strcmp(a->args[i].name, b->args[i].name))
+			return false;
+	}
+
+	return true;
 }

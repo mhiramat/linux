@@ -302,9 +302,18 @@ static inline struct list_head * trace_probe_probe_list(struct trace_probe *tp)
 	return &tp->event->probes;
 }
 
+static inline bool trace_probe_has_sibling(struct trace_probe *tp)
+{
+	struct list_head *list = trace_probe_probe_list(tp);
+
+	return !list_empty(list) && !list_is_singular(list);
+}
+
 int trace_probe_init(struct trace_probe *tp, const char *event,
 		     const char *group);
 void trace_probe_cleanup(struct trace_probe *tp);
+int trace_probe_append(struct trace_probe *tp, struct trace_probe *to);
+void trace_probe_unlink(struct trace_probe *tp);
 int trace_probe_register_event_call(struct trace_probe *tp);
 static inline int trace_probe_unregister_event_call(struct trace_probe *tp)
 {
@@ -316,6 +325,7 @@ int trace_probe_remove_file(struct trace_probe *tp,
 			    struct trace_event_file *file);
 int trace_probe_check_last_file(struct trace_probe *tp,
 				struct trace_event_file *file);
+bool trace_probe_same_arg_type(struct trace_probe *a, struct trace_probe *b);
 #define trace_probe_for_each_link(pos, tp)	\
 	list_for_each_entry(pos, &(tp)->event->files, list)
 #define trace_probe_for_each_link_rcu(pos, tp)	\
