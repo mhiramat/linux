@@ -947,7 +947,7 @@ int trace_probe_add_file(struct trace_probe *tp, struct trace_event_file *file)
 	link->file = file;
 	INIT_LIST_HEAD(&link->list);
 	list_add_tail_rcu(&link->list, &tp->files);
-	tp->flags |= TP_FLAG_TRACE;
+	trace_probe_set_flag(tp, TP_FLAG_TRACE);
 	return 0;
 }
 
@@ -967,7 +967,7 @@ found:
 	kfree(link);
 
 	if (list_empty(&tp->files))
-		tp->flags &= ~TP_FLAG_TRACE;
+		trace_probe_clear_flag(tp, TP_FLAG_TRACE);
 	return 0;
 }
 
