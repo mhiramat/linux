@@ -266,6 +266,16 @@ static inline bool trace_probe_is_registered(struct trace_probe *tp)
 	return trace_probe_test_flag(tp, TP_FLAG_REGISTERED);
 }
 
+static inline const char *trace_probe_name(struct trace_probe *tp)
+{
+	return trace_event_name(&tp->call);
+}
+
+static inline const char *trace_probe_group_name(struct trace_probe *tp)
+{
+	return tp->call.class->system;
+}
+
 int trace_probe_init(struct trace_probe *tp, const char *event,
 		     const char *group);
 void trace_probe_cleanup(struct trace_probe *tp);
