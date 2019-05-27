@@ -158,7 +158,7 @@ union trace_eval_map_item {
 static union trace_eval_map_item *trace_eval_maps;
 #endif /* CONFIG_TRACE_EVAL_MAP_FILE */
 
-static int tracing_set_tracer(struct trace_array *tr, const char *buf);
+int tracing_set_tracer(struct trace_array *tr, const char *buf);
 static void ftrace_trace_userstack(struct ring_buffer *buffer,
 				   unsigned long flags, int pc);
 
@@ -177,6 +177,11 @@ static int __init set_cmdline_ftrace(char *str)
 	return 1;
 }
 __setup("ftrace=", set_cmdline_ftrace);
+
+void __init trace_init_dump_on_oops(int mode)
+{
+	ftrace_dump_on_oops = mode;
+}
 
 static int __init set_ftrace_dump_on_oops(char *str)
 {
@@ -4614,7 +4619,7 @@ int set_tracer_flag(struct trace_array *tr, unsigned int mask, int enabled)
 	return 0;
 }
 
-static int trace_set_options(struct trace_array *tr, char *option)
+int trace_set_options(struct trace_array *tr, char *option)
 {
 	char *cmp;
 	int neg = 0;
@@ -5505,8 +5510,8 @@ static int __tracing_resize_ring_buffer(struct trace_array *tr,
 	return ret;
 }
 
-static ssize_t tracing_resize_ring_buffer(struct trace_array *tr,
-					  unsigned long size, int cpu_id)
+ssize_t tracing_resize_ring_buffer(struct trace_array *tr,
+				  unsigned long size, int cpu_id)
 {
 	int ret = size;
 
@@ -5585,7 +5590,7 @@ static void add_tracer_options(struct trace_array *tr, struct tracer *t)
 	create_trace_option_files(tr, t);
 }
 
-static int tracing_set_tracer(struct trace_array *tr, const char *buf)
+int tracing_set_tracer(struct trace_array *tr, const char *buf)
 {
 	struct tracer *t;
 #ifdef CONFIG_TRACER_MAX_TRACE
@@ -9160,16 +9165,23 @@ out:
 	return ret;
 }
 
+void __init trace_init_tracepoint_printk(void)
+{
+	tracepoint_printk = 1;
+
+	tracepoint_print_iter =
+		kmalloc(sizeof(*tracepoint_print_iter), GFP_KERNEL);
+	if (WARN_ON(!tracepoint_print_iter))
+		tracepoint_printk = 0;
+	else
+		static_key_enable(&tracepoint_printk_key.key);
+}
+
 void __init early_trace_init(void)
 {
-	if (tracepoint_printk) {
-		tracepoint_print_iter =
-			kmalloc(sizeof(*tracepoint_print_iter), GFP_KERNEL);
-		if (WARN_ON(!tracepoint_print_iter))
-			tracepoint_printk = 0;
-		else
-			static_key_enable(&tracepoint_printk_key.key);
-	}
+	if (tracepoint_printk)
+		trace_init_tracepoint_printk();
+
 	tracer_alloc_buffers();
 }
 
