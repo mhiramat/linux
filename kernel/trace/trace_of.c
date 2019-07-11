@@ -322,10 +322,46 @@ trace_of_init_events(struct trace_array *tr, struct device_node *node)
 #define trace_of_init_events(tr, node) do {} while (0)
 #endif
 
+#ifdef CONFIG_FUNCTION_TRACER
+extern bool ftrace_filter_param __initdata;
+extern int ftrace_set_filter(struct ftrace_ops *ops, unsigned char *buf,
+			     int len, int reset);
+extern int ftrace_set_notrace(struct ftrace_ops *ops, unsigned char *buf,
+			     int len, int reset);
+
+static void __init
+trace_of_set_ftrace_filter(struct ftrace_ops *ops, const char *property,
+			   struct device_node *node)
+{
+	struct property *prop;
+	const char *p;
+	char buf[MAX_BUF_LEN];
+	int err;
+
+	of_property_for_each_string(node, property, prop, p) {
+		if (strlcpy(buf, p, ARRAY_SIZE(buf)) >= ARRAY_SIZE(buf)) {
+			pr_err("filter string is too long: %s\n", p);
+			return;
+		}
+		err = ftrace_set_filter(ops, buf, strlen(buf), 0);
+		if (err) {
+			pr_err("Failed to add %s: %s\n", property, buf);
+			return;
+		}
+		ftrace_filter_param = true;
+	}
+}
+#else
+#define trace_of_set_ftrace_filter(ops, prop, node) do {} while (0)
+#endif
+
 static void __init
 trace_of_enable_tracer(struct trace_array *tr, struct device_node *node)
 {
 	const char *p;
+
+	trace_of_set_ftrace_filter(tr->ops, "ftrace-filters", node);
+	trace_of_set_ftrace_filter(tr->ops, "ftrace-notraces", node);
 
 	if (!of_property_read_string(node, "tracer", &p)) {
 		if (tracing_set_tracer(tr, p) < 0)
