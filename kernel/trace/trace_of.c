@@ -21,9 +21,10 @@ extern int tracing_set_tracer(struct trace_array *tr, const char *buf);
 extern void __init trace_init_tracepoint_printk(void);
 extern ssize_t tracing_resize_ring_buffer(struct trace_array *tr,
 					  unsigned long size, int cpu_id);
+extern struct trace_array *trace_array_create(const char *name);
 
 static void __init
-trace_of_set_ftrace_options(struct trace_array *tr, struct device_node *node)
+trace_of_set_instance_options(struct trace_array *tr, struct device_node *node)
 {
 	struct property *prop;
 	const char *p;
@@ -48,6 +49,24 @@ trace_of_set_ftrace_options(struct trace_array *tr, struct device_node *node)
 			pr_err("Failed to set trace clock: %s\n", p);
 	}
 
+	/* This accepts per-cpu buffer size in KB */
+	err = of_property_read_u32_index(node, "buffer-size-kb", 0, &v);
+	if (!err) {
+		v <<= 10;	/* KB to Byte */
+		if (v < PAGE_SIZE)
+			pr_err("Buffer size is too small: %d KB\n", v >> 10);
+		if (tracing_resize_ring_buffer(tr, v, RING_BUFFER_ALL_CPUS) < 0)
+			pr_err("Failed to resize trace buffer to %d KB\n",
+				v >> 10);
+	}
+}
+
+static void __init
+trace_of_set_ftrace_options(struct trace_array *tr, struct device_node *node)
+{
+	u32 v = 0;
+	int err;
+
 	/* Command line boot options */
 	if (of_find_property(node, "dump-on-oops", NULL)) {
 		err = of_property_read_u32_index(node, "dump-on-oops", 0, &v);
@@ -63,20 +82,11 @@ trace_of_set_ftrace_options(struct trace_array *tr, struct device_node *node)
 	if (of_find_property(node, "tp-printk", NULL))
 		trace_init_tracepoint_printk();
 
-	/* This accepts per-cpu buffer size in KB */
-	err = of_property_read_u32_index(node, "buffer-size-kb", 0, &v);
-	if (!err) {
-		v <<= 10;	/* KB to Byte */
-		if (v < PAGE_SIZE)
-			pr_err("Buffer size is too small: %d KB\n", v >> 10);
-		if (tracing_resize_ring_buffer(tr, v, RING_BUFFER_ALL_CPUS) < 0)
-			pr_err("Failed to resize trace buffer to %d KB\n",
-				v >> 10);
-	}
-
 	if (of_find_property(node, "alloc-snapshot", NULL))
 		if (tracing_alloc_snapshot() < 0)
 			pr_err("Failed to allocate snapshot buffer\n");
+
+	trace_of_set_instance_options(tr, node);
 }
 
 #ifdef CONFIG_EVENT_TRACING
@@ -310,6 +320,38 @@ trace_of_enable_tracer(struct trace_array *tr, struct device_node *node)
 	}
 }
 
+static void __init
+trace_of_init_instances(struct device_node *__node)
+{
+	struct device_node *node;
+	struct trace_array *tr;
+	const char *p;
+	int err;
+
+	for_each_child_of_node(__node, node) {
+		if (!of_node_name_prefix(node, "instance"))
+			continue;
+
+		err = of_property_read_string(node, "instance", &p);
+		if (err) {
+			pr_err("Failed to get instance name on %s\n",
+				of_node_full_name(node));
+			continue;
+		}
+
+		tr = trace_array_create(p);
+		if (IS_ERR(tr)) {
+			pr_err("Failed to create instance %s\n", p);
+			continue;
+		}
+
+		trace_of_set_instance_options(tr, node);
+		trace_of_init_events(tr, node);
+		trace_of_enable_events(tr, node);
+		trace_of_enable_tracer(tr, node);
+	}
+}
+
 static struct device_node * __init trace_of_find_ftrace_node(void)
 {
 	if (!of_chosen)
@@ -337,6 +379,7 @@ static int __init trace_of_init(void)
 	trace_of_init_events(tr, trace_node);
 	trace_of_enable_events(tr, trace_node);
 	trace_of_enable_tracer(tr, trace_node);
+	trace_of_init_instances(trace_node);
 
 end:
 	of_node_put(trace_node);
