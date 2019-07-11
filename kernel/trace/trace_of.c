@@ -81,6 +81,7 @@ trace_of_set_ftrace_options(struct trace_array *tr, struct device_node *node)
 
 #ifdef CONFIG_EVENT_TRACING
 extern int ftrace_set_clr_event(struct trace_array *tr, char *buf, int set);
+extern int trigger_process_regex(struct trace_event_file *file, char *buff);
 
 static void __init
 trace_of_enable_events(struct trace_array *tr, struct device_node *node)
@@ -99,8 +100,88 @@ trace_of_enable_events(struct trace_array *tr, struct device_node *node)
 			pr_err("Failed to enable event: %s\n", p);
 	}
 }
+
+static void __init
+trace_of_init_one_event(struct trace_array *tr, struct device_node *node)
+{
+	struct trace_event_file *file;
+	struct property *prop;
+	char buf[MAX_BUF_LEN];
+	char *bufp;
+	const char *p;
+	int err;
+
+	if (!of_node_name_prefix(node, "event"))
+		return;
+
+	err = of_property_read_string(node, "event", &p);
+	if (err) {
+		pr_err("Failed to find event on %s\n", of_node_full_name(node));
+		return;
+	}
+
+	err = strlcpy(buf, p, ARRAY_SIZE(buf));
+	if (err >= ARRAY_SIZE(buf)) {
+		pr_err("Event name is too long: %s\n", p);
+		return;
+	}
+	bufp = buf;
+
+	p = strsep(&bufp, ":");
+	if (!bufp) {
+		pr_err("%s has no group name\n", buf);
+		return;
+	}
+
+	mutex_lock(&event_mutex);
+	file = find_event_file(tr, buf, bufp);
+	if (!file) {
+		pr_err("Failed to find event: %s\n", buf);
+		return;
+	}
+
+	err = of_property_read_string(node, "filter", &p);
+	if (!err) {
+		if (strlcpy(buf, p, ARRAY_SIZE(buf)) >= ARRAY_SIZE(buf)) {
+			pr_err("filter string is too long: %s\n", p);
+			return;
+		}
+
+		if (apply_event_filter(file, buf) < 0) {
+			pr_err("Failed to apply filter: %s\n", buf);
+			return;
+		}
+	}
+
+	of_property_for_each_string(node, "actions", prop, p) {
+		if (strlcpy(buf, p, ARRAY_SIZE(buf)) >= ARRAY_SIZE(buf)) {
+			pr_err("action string is too long: %s\n", p);
+			continue;
+		}
+
+		if (trigger_process_regex(file, buf) < 0)
+			pr_err("Failed to apply an action: %s\n", buf);
+	}
+
+	if (of_property_read_bool(node, "enable")) {
+		if (trace_event_enable_disable(file, 1, 0) < 0)
+			pr_err("Failed to enable event node: %s\n",
+				of_node_full_name(node));
+	}
+	mutex_unlock(&event_mutex);
+}
+
+static void __init
+trace_of_init_events(struct trace_array *tr, struct device_node *node)
+{
+	struct device_node *enode;
+
+	for_each_child_of_node(node, enode)
+		trace_of_init_one_event(tr, enode);
+}
 #else
 #define trace_of_enable_events(tr, node) do {} while (0)
+#define trace_of_init_events(tr, node) do {} while (0)
 #endif
 
 static void __init
@@ -139,6 +220,7 @@ static int __init trace_of_init(void)
 		goto end;
 
 	trace_of_set_ftrace_options(tr, trace_node);
+	trace_of_init_events(tr, trace_node);
 	trace_of_enable_events(tr, trace_node);
 	trace_of_enable_tracer(tr, trace_node);
 
