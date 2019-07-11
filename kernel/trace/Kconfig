@@ -796,6 +796,16 @@ config GCOV_PROFILE_FTRACE
 	  Note that on a kernel compiled with this config, ftrace will
 	  run significantly slower.
 
+config OF_TRACING
+	bool "Boot Trace Programming by Devicetree"
+	depends on OF && TRACING
+	select OF_EARLY_FLATTREE
+	default y
+	help
+	  Enable developer to setup ftrace subsystem via devicetree
+	  at boot time for debugging (tracing) driver initialization
+	  and boot process.
+
 endif # FTRACE
 
 endif # TRACING_SUPPORT
