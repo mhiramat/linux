@@ -75,6 +75,71 @@ trace_of_set_instance_options(struct trace_array *tr, struct device_node *node)
 	}
 }
 
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+extern unsigned int fgraph_max_depth;
+extern struct ftrace_hash *ftrace_graph_copy_hash(bool enable);
+extern int ftrace_graph_set_hash(struct ftrace_hash *hash, char *buffer);
+extern int ftrace_graph_apply_hash(struct ftrace_hash *hash, bool enable);
+extern void free_ftrace_hash(struct ftrace_hash *hash);
+
+static void __init
+trace_of_set_fgraph_filter(struct device_node *node, const char *property,
+			   bool enable)
+{
+	struct ftrace_hash *hash;
+	struct property *prop;
+	const char *p;
+	char buf[MAX_BUF_LEN];
+	int err;
+
+	if (!of_find_property(node, property, NULL))
+		return;
+
+	/* Get current filter hash */
+	hash = ftrace_graph_copy_hash(enable);
+	if (!hash) {
+		pr_err("Failed to copy hash\n");
+		return;
+	}
+
+	of_property_for_each_string(node, property, prop, p) {
+		if (strlcpy(buf, p, ARRAY_SIZE(buf)) >= ARRAY_SIZE(buf)) {
+			pr_err("filter string is too long: %s\n", p);
+			goto free_hash;
+		}
+		err = ftrace_graph_set_hash(hash, buf);
+		if (err) {
+			pr_err("Failed to add %s: %s\n", property, buf);
+			goto free_hash;
+		}
+	}
+
+	if (ftrace_graph_apply_hash(hash, enable) < 0) {
+		pr_err("Failed to apply new hash\n");
+		goto free_hash;
+	}
+
+	return;
+
+free_hash:
+	free_ftrace_hash(hash);
+}
+
+static void __init
+trace_of_set_fgraph_options(struct device_node *node)
+{
+	u32 v = 0;
+
+	trace_of_set_fgraph_filter(node, "fgraph-filters", true);
+	trace_of_set_fgraph_filter(node, "fgraph-notraces", false);
+
+	if (!of_property_read_u32_index(node, "fgraph-max-depth", 0, &v))
+		fgraph_max_depth = (unsigned int)v;
+}
+#else
+#define trace_of_set_fgraph_options(node) do {} while (0)
+#endif
+
 static void __init
 trace_of_set_ftrace_options(struct trace_array *tr, struct device_node *node)
 {
@@ -99,6 +164,9 @@ trace_of_set_ftrace_options(struct trace_array *tr, struct device_node *node)
 	if (of_find_property(node, "alloc-snapshot", NULL))
 		if (tracing_alloc_snapshot() < 0)
 			pr_err("Failed to allocate snapshot buffer\n");
+
+	/* function graph filters are global settings. */
+	trace_of_set_fgraph_options(node);
 
 	trace_of_set_instance_options(tr, node);
 }

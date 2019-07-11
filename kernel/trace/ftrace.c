@@ -1241,7 +1241,7 @@ static void clear_ftrace_mod_list(struct list_head *head)
 	mutex_unlock(&ftrace_lock);
 }
 
-static void free_ftrace_hash(struct ftrace_hash *hash)
+void free_ftrace_hash(struct ftrace_hash *hash)
 {
 	if (!hash || hash == EMPTY_HASH)
 		return;
@@ -4895,7 +4895,7 @@ __setup("ftrace_filter=", set_ftrace_filter);
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 static char ftrace_graph_buf[FTRACE_FILTER_SIZE] __initdata;
 static char ftrace_graph_notrace_buf[FTRACE_FILTER_SIZE] __initdata;
-static int ftrace_graph_set_hash(struct ftrace_hash *hash, char *buffer);
+int ftrace_graph_set_hash(struct ftrace_hash *hash, char *buffer);
 
 static int __init set_graph_function(char *str)
 {
@@ -5224,6 +5224,26 @@ out:
 	return ret;
 }
 
+struct ftrace_hash *ftrace_graph_copy_hash(bool enable)
+{
+	struct ftrace_hash *hash;
+
+	mutex_lock(&graph_lock);
+
+	if (enable)
+		hash = rcu_dereference_protected(ftrace_graph_hash,
+					lockdep_is_held(&graph_lock));
+	else
+		hash = rcu_dereference_protected(ftrace_graph_notrace_hash,
+					lockdep_is_held(&graph_lock));
+
+	hash = alloc_and_copy_ftrace_hash(FTRACE_HASH_DEFAULT_BITS, hash);
+
+	mutex_unlock(&graph_lock);
+
+	return hash;
+}
+
 static int
 ftrace_graph_open(struct inode *inode, struct file *file)
 {
@@ -5280,11 +5300,40 @@ ftrace_graph_notrace_open(struct inode *inode, struct file *file)
 	return ret;
 }
 
+int ftrace_graph_apply_hash(struct ftrace_hash *hash, bool enable)
+{
+	struct ftrace_hash *old_hash, *new_hash;
+
+	new_hash = __ftrace_hash_move(hash);
+	if (!new_hash)
+		return -ENOMEM;
+
+	mutex_lock(&graph_lock);
+
+	if (enable) {
+		old_hash = rcu_dereference_protected(ftrace_graph_hash,
+				lockdep_is_held(&graph_lock));
+		rcu_assign_pointer(ftrace_graph_hash, new_hash);
+	} else {
+		old_hash = rcu_dereference_protected(ftrace_graph_notrace_hash,
+				lockdep_is_held(&graph_lock));
+		rcu_assign_pointer(ftrace_graph_notrace_hash, new_hash);
+	}
+
+	mutex_unlock(&graph_lock);
+
+	/* Wait till all users are no longer using the old hash */
+	synchronize_rcu();
+
+	free_ftrace_hash(old_hash);
+
+	return 0;
+}
+
 static int
 ftrace_graph_release(struct inode *inode, struct file *file)
 {
 	struct ftrace_graph_data *fgd;
-	struct ftrace_hash *old_hash, *new_hash;
 	struct trace_parser *parser;
 	int ret = 0;
 
@@ -5309,41 +5358,17 @@ ftrace_graph_release(struct inode *inode, struct file *file)
 
 		trace_parser_put(parser);
 
-		new_hash = __ftrace_hash_move(fgd->new_hash);
-		if (!new_hash) {
-			ret = -ENOMEM;
-			goto out;
-		}
-
-		mutex_lock(&graph_lock);
-
-		if (fgd->type == GRAPH_FILTER_FUNCTION) {
-			old_hash = rcu_dereference_protected(ftrace_graph_hash,
-					lockdep_is_held(&graph_lock));
-			rcu_assign_pointer(ftrace_graph_hash, new_hash);
-		} else {
-			old_hash = rcu_dereference_protected(ftrace_graph_notrace_hash,
-					lockdep_is_held(&graph_lock));
-			rcu_assign_pointer(ftrace_graph_notrace_hash, new_hash);
-		}
-
-		mutex_unlock(&graph_lock);
-
-		/* Wait till all users are no longer using the old hash */
-		synchronize_rcu();
-
-		free_ftrace_hash(old_hash);
+		ret = ftrace_graph_apply_hash(fgd->new_hash,
+					fgd->type == GRAPH_FILTER_FUNCTION);
 	}
 
- out:
 	free_ftrace_hash(fgd->new_hash);
 	kfree(fgd);
 
 	return ret;
 }
 
-static int
-ftrace_graph_set_hash(struct ftrace_hash *hash, char *buffer)
+int ftrace_graph_set_hash(struct ftrace_hash *hash, char *buffer)
 {
 	struct ftrace_glob func_g;
 	struct dyn_ftrace *rec;
