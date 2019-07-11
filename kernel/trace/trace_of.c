@@ -101,14 +101,59 @@ trace_of_enable_events(struct trace_array *tr, struct device_node *node)
 	}
 }
 
+#ifdef CONFIG_KPROBE_EVENTS
+extern int trace_kprobe_run_command(const char *command);
+
+static int __init
+trace_of_add_kprobe_event(struct device_node *node,
+			  const char *group, const char *event)
+{
+	struct property *prop;
+	char buf[MAX_BUF_LEN];
+	const char *p;
+	char *q;
+	int len, ret;
+
+	len = snprintf(buf, ARRAY_SIZE(buf) - 1, "p:%s/%s ", group, event);
+	if (len >= ARRAY_SIZE(buf)) {
+		pr_err("Event name is too long: %s\n", event);
+		return -E2BIG;
+	}
+	q = buf + len;
+	len = ARRAY_SIZE(buf) - len;
+
+	of_property_for_each_string(node, "probes", prop, p) {
+		if (strlcpy(q, p, len) >= len) {
+			pr_err("Probe definition is too long: %s\n", p);
+			return -E2BIG;
+		}
+		ret = trace_kprobe_run_command(buf);
+		if (ret < 0) {
+			pr_err("Failed to add probe: %s\n", buf);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+#else
+static inline int __init
+trace_of_add_kprobe_event(struct device_node *node,
+			  const char *group, const char *event)
+{
+	pr_err("Kprobe event is not supported.\n");
+	return -ENOTSUPP;
+}
+#endif
+
 static void __init
 trace_of_init_one_event(struct trace_array *tr, struct device_node *node)
 {
 	struct trace_event_file *file;
 	struct property *prop;
 	char buf[MAX_BUF_LEN];
-	char *bufp;
-	const char *p;
+	const char *p, *group;
+	char *event;
 	int err;
 
 	if (!of_node_name_prefix(node, "event"))
@@ -125,18 +170,29 @@ trace_of_init_one_event(struct trace_array *tr, struct device_node *node)
 		pr_err("Event name is too long: %s\n", p);
 		return;
 	}
-	bufp = buf;
+	event = buf;
 
-	p = strsep(&bufp, ":");
-	if (!bufp) {
-		pr_err("%s has no group name\n", buf);
-		return;
+	group = strsep(&event, ":");
+	/* For a kprobe event, we have to generates an event at first */
+	if (of_find_property(node, "probes", NULL)) {
+		if (!event) {
+			event = buf;
+			group = "kprobes";
+		}
+		err = trace_of_add_kprobe_event(node, group, event);
+		if (err < 0)
+			return;
+	} else {
+		if (!event) {
+			pr_err("%s has no group name\n", buf);
+			return;
+		}
 	}
 
 	mutex_lock(&event_mutex);
-	file = find_event_file(tr, buf, bufp);
+	file = find_event_file(tr, group, event);
 	if (!file) {
-		pr_err("Failed to find event: %s\n", buf);
+		pr_err("Failed to find event: %s:%s\n", group, event);
 		return;
 	}
 
