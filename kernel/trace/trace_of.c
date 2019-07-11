@@ -146,6 +146,49 @@ trace_of_add_kprobe_event(struct device_node *node,
 }
 #endif
 
+#ifdef CONFIG_HIST_TRIGGERS
+extern int synth_event_run_command(const char *command);
+
+static int __init
+trace_of_add_synth_event(struct device_node *node, const char *event)
+{
+	struct property *prop;
+	char buf[MAX_BUF_LEN], *q;
+	const char *p;
+	int len, delta, ret;
+
+	len = ARRAY_SIZE(buf);
+	delta = snprintf(buf, len, "%s", event);
+	if (delta >= len) {
+		pr_err("Event name is too long: %s\n", event);
+		return -E2BIG;
+	}
+	len -= delta; q = buf + delta;
+
+	of_property_for_each_string(node, "fields", prop, p) {
+		delta = snprintf(q, len, " %s;", p);
+		if (delta >= len) {
+			pr_err("fields string is too long: %s\n", p);
+			return -E2BIG;
+		}
+		len -= delta; q += delta;
+	}
+
+	ret = synth_event_run_command(buf);
+	if (ret < 0)
+		pr_err("Failed to add synthetic event: %s\n", buf);
+
+	return ret;
+}
+#else
+static inline int __init
+trace_of_add_synth_event(struct device_node *node, const char *event)
+{
+	pr_err("Synthetic event is not supported.\n");
+	return -ENOTSUPP;
+}
+#endif
+
 static void __init
 trace_of_init_one_event(struct trace_array *tr, struct device_node *node)
 {
@@ -173,15 +216,30 @@ trace_of_init_one_event(struct trace_array *tr, struct device_node *node)
 	event = buf;
 
 	group = strsep(&event, ":");
-	/* For a kprobe event, we have to generates an event at first */
+
+	/* Generates kprobe/synth event at first */
 	if (of_find_property(node, "probes", NULL)) {
+		if (of_find_property(node, "fields", NULL)) {
+			pr_err("Error: %s node has both probes and fields\n",
+				of_node_full_name(node));
+			return;
+		}
 		if (!event) {
 			event = buf;
 			group = "kprobes";
 		}
-		err = trace_of_add_kprobe_event(node, group, event);
-		if (err < 0)
+		if (trace_of_add_kprobe_event(node, group, event) < 0)
 			return;
+	} else if (of_find_property(node, "fields", NULL)) {
+		if (!event)
+			event = buf;
+		else if (strcmp(group, "synthetic") != 0) {
+			pr_err("Synthetic event must be in synthetic group\n");
+			return;
+		}
+		if (trace_of_add_synth_event(node, event) < 0)
+			return;
+		group = "synthetic";
 	} else {
 		if (!event) {
 			pr_err("%s has no group name\n", buf);
