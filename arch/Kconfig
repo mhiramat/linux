@@ -24,6 +24,16 @@ config HAVE_IMA_KEXEC
 config HOTPLUG_SMT
 	bool
 
+config SKC
+	bool "Structured kernel command line support"
+	depends on ARCH_HAS_SKC
+	select LIBSKC
+	default y
+	help
+	 Structured kernel command line allows system admin to pass an
+	 skc file as complemental extension of kernel cmdline when boot.
+	 The bootloader needs to support lading the skc file.
+
 config OPROFILE
 	tristate "OProfile system profiling"
 	depends on PROFILING
@@ -242,6 +252,10 @@ config ARCH_HAS_SET_MEMORY
 
 # Select if arch has all set_direct_map_invalid/default() functions
 config ARCH_HAS_SET_DIRECT_MAP
+	bool
+
+# Select if arch can load structured kernel cmdline
+config ARCH_HAS_SKC
 	bool
 
 #

@@ -568,6 +568,9 @@ config DIMLIB
 config LIBFDT
 	bool
 
+config LIBSKC
+	bool
+
 config OID_REGISTRY
 	tristate
 	help
