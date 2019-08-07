@@ -126,6 +126,7 @@ obj-$(CONFIG_X86_CHECK_BIOS_CORRUPTION) += check.o
 
 obj-$(CONFIG_SWIOTLB)			+= pci-swiotlb.o
 obj-$(CONFIG_OF)			+= devicetree.o
+obj-$(CONFIG_SKC)			+= skc.o
 obj-$(CONFIG_UPROBES)			+= uprobes.o
 obj-y					+= sysfb.o
 obj-$(CONFIG_X86_SYSFB)			+= sysfb_simplefb.o

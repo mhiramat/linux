@@ -422,6 +422,9 @@ static void __init parse_setup_data(void)
 		case SETUP_EFI:
 			parse_efi_setup(pa_data, data_len);
 			break;
+		case SETUP_SKC:
+			add_skc(pa_data, data_len);
+			break;
 		default:
 			break;
 		}
@@ -1194,6 +1197,8 @@ void __init setup_arch(char **cmdline_p)
 	}
 
 	reserve_initrd();
+
+	x86_skc_init();
 
 	acpi_table_upgrade();
 

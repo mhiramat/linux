@@ -31,6 +31,14 @@ static inline void x86_dtb_init(void) { }
 #define of_ioapic 0
 #endif
 
+#ifdef CONFIG_SKC
+void add_skc(u64 data, u32 len);
+void x86_skc_init(void);
+#else
+static inline void add_skc(u64 data, u32 len) { }
+static inline void x86_skc_init(void) { }
+#endif
+
 extern char cmd_line[COMMAND_LINE_SIZE];
 
 #endif /* __ASSEMBLY__ */
