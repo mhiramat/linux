@@ -15366,6 +15366,7 @@ SUPPLEMENTAL KERNEL CMDLINE
 M:	Masami Hiramatsu <mhiramat@kernel.org>
 S:	Maintained
 F:	lib/skc.c
+F:	fs/proc/sup_cmdline.c
 F:	include/linux/skc.h
 
 SUN3/3X
