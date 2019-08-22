@@ -24,6 +24,15 @@ config HAVE_IMA_KEXEC
 config HOTPLUG_SMT
 	bool
 
+config SKC
+	bool "Supplemental kernel cmdline"
+	select LIBSKC
+	default y
+	help
+	 Supplemental kernel command line allows system admin to pass a
+	 text file as complemental extension of kernel cmdline when boot.
+	 The bootloader needs to support loading the SKC file.
+
 config OPROFILE
 	tristate "OProfile system profiling"
 	depends on PROFILING
