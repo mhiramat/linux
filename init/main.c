@@ -36,6 +36,7 @@
 #include <linux/kernel_stat.h>
 #include <linux/start_kernel.h>
 #include <linux/security.h>
+#include <linux/skc.h>
 #include <linux/smp.h>
 #include <linux/profile.h>
 #include <linux/rcupdate.h>
@@ -245,6 +246,58 @@ static int __init loglevel(char *str)
 
 early_param("loglevel", loglevel);
 
+#ifdef CONFIG_SKC
+__initdata unsigned long initial_skc;
+__initdata unsigned long initial_skc_len;
+
+static int __init save_skc_address(char *str)
+{
+	char *p;
+
+	p = strchr(str, ',');
+	if (!p)
+		return -EINVAL;
+	*p++ = '\0';
+	/* First options should be physical address - int is not enough */
+	if (kstrtoul(str, 0, &initial_skc) < 0)
+		return -EINVAL;
+	if (kstrtoul(p, 0, &initial_skc_len) < 0)
+		return -EINVAL;
+	if (initial_skc_len > SKC_DATA_MAX)
+		return -E2BIG;
+	/* Reserve it for protection */
+	memblock_reserve(initial_skc, initial_skc_len);
+
+	return 0;
+}
+early_param("skc", save_skc_address);
+
+static void __init setup_skc(void)
+{
+	u32 size;
+	char *data, *copy;
+
+	if (!initial_skc)
+		return;
+
+	data = early_memremap(initial_skc, initial_skc_len);
+	size = initial_skc_len + 1;
+
+	copy = memblock_alloc(size, SMP_CACHE_BYTES);
+	if (!copy) {
+		pr_err("Failed to allocate memory for structured kernel cmdline\n");
+		goto end;
+	}
+	memcpy(copy, data, initial_skc_len);
+	copy[size - 1] = '\0';
+
+	skc_init(copy);
+end:
+	early_memunmap(data, initial_skc_len);
+}
+#else
+#define setup_skc()	do { } while (0)
+#endif
 /* Change NUL term back to "=", to make "param" the whole string. */
 static int __init repair_env_string(char *param, char *val,
 				    const char *unused, void *arg)
@@ -596,6 +649,7 @@ asmlinkage __visible void __init start_kernel(void)
 	setup_arch(&command_line);
 	mm_init_cpumask(&init_mm);
 	setup_command_line(command_line);
+	setup_skc();
 	setup_nr_cpu_ids();
 	setup_per_cpu_areas();
 	smp_prepare_boot_cpu();	/* arch-specific boot-cpu hooks */

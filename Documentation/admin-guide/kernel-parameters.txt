@@ -4273,6 +4273,11 @@
 	simeth=		[IA-64]
 	simscsi=
 
+	skc=paddr,size	[SKC]
+			Pass the physical memory address and size of loaded
+			supplemental kernel cmdline (SKC) text. This will
+			be treated by bootloader which loads the SKC file.
+
 	slram=		[HW,MTD]
 
 	slab_nomerge	[MM]
