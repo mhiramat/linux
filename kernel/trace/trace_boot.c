@@ -72,6 +72,75 @@ trace_boot_set_instance_options(struct trace_array *tr, struct skc_node *node)
 	}
 }
 
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+extern unsigned int fgraph_max_depth;
+extern struct ftrace_hash *ftrace_graph_copy_hash(bool enable);
+extern int ftrace_graph_set_hash(struct ftrace_hash *hash, char *buffer);
+extern int ftrace_graph_apply_hash(struct ftrace_hash *hash, bool enable);
+extern void free_ftrace_hash(struct ftrace_hash *hash);
+
+static void __init
+trace_boot_set_fgraph_filter(struct skc_node *node, const char *option,
+			     bool enable)
+{
+	struct ftrace_hash *hash;
+	struct skc_node *anode;
+	const char *p;
+	char *q;
+	int err;
+	bool updated = false;
+
+	hash = ftrace_graph_copy_hash(enable);
+	if (!hash) {
+		pr_err("Failed to copy fgraph hash\n");
+		return;
+	}
+	skc_node_for_each_array_value(node, option, anode, p) {
+		q = kstrdup(p, GFP_KERNEL);
+		if (!q)
+			goto free_hash;
+		err = ftrace_graph_set_hash(hash, q);
+		kfree(q);
+		if (err)
+			pr_err("Failed to add %s: %s\n", option, p);
+		else
+			updated = true;
+	}
+	if (!updated)
+		goto free_hash;
+
+	if (ftrace_graph_apply_hash(hash, enable) < 0)
+		pr_err("Failed to apply new fgraph hash\n");
+	else {
+		/* If succeeded to apply new hash, old hash is released */
+		return;
+	}
+
+free_hash:
+	free_ftrace_hash(hash);
+}
+
+static void __init
+trace_boot_set_fgraph_options(struct skc_node *node)
+{
+	const char *p;
+	unsigned long v;
+
+	node = skc_node_find_child(node, "fgraph");
+	if (!node)
+		return;
+
+	trace_boot_set_fgraph_filter(node, "filters", true);
+	trace_boot_set_fgraph_filter(node, "notraces", false);
+
+	p = skc_node_find_value(node, "max_depth", NULL);
+	if (p && *p != '\0' && !kstrtoul(p, 0, &v))
+		fgraph_max_depth = (unsigned int)v;
+}
+#else
+#define trace_boot_set_fgraph_options(node)	do {} while (0)
+#endif
+
 static void __init
 trace_boot_set_global_options(struct trace_array *tr, struct skc_node *node)
 {
@@ -98,6 +167,8 @@ trace_boot_set_global_options(struct trace_array *tr, struct skc_node *node)
 	if (skc_node_find_value(node, "alloc_snapshot", NULL))
 		if (tracing_alloc_snapshot() < 0)
 			pr_err("Failed to allocate snapshot buffer\n");
+
+	trace_boot_set_fgraph_options(node);
 }
 
 #ifdef CONFIG_EVENT_TRACING
