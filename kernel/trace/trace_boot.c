@@ -21,15 +21,15 @@ extern int tracing_set_tracer(struct trace_array *tr, const char *buf);
 extern void __init trace_init_tracepoint_printk(void);
 extern ssize_t tracing_resize_ring_buffer(struct trace_array *tr,
 					  unsigned long size, int cpu_id);
+extern struct trace_array *trace_array_create(const char *name);
 
 static void __init
-trace_boot_set_ftrace_options(struct trace_array *tr, struct skc_node *node)
+trace_boot_set_instance_options(struct trace_array *tr, struct skc_node *node)
 {
 	struct skc_node *anode;
 	const char *p;
 	char buf[MAX_BUF_LEN];
 	unsigned long v = 0;
-	int err;
 
 	/* Common ftrace options */
 	skc_node_for_each_array_value(node, "options", anode, p) {
@@ -48,6 +48,23 @@ trace_boot_set_ftrace_options(struct trace_array *tr, struct skc_node *node)
 			pr_err("Failed to set trace clock: %s\n", p);
 	}
 
+	p = skc_node_find_value(node, "buffer_size", NULL);
+	if (p && *p != '\0') {
+		v = memparse(p, NULL);
+		if (v < PAGE_SIZE)
+			pr_err("Buffer size is too small: %s\n", p);
+		if (tracing_resize_ring_buffer(tr, v, RING_BUFFER_ALL_CPUS) < 0)
+			pr_err("Failed to resize trace buffer to %s\n", p);
+	}
+}
+
+static void __init
+trace_boot_set_global_options(struct trace_array *tr, struct skc_node *node)
+{
+	unsigned long v = 0;
+	const char *p;
+	int err;
+
 	/* Command line boot options */
 	p = skc_node_find_value(node, "dump_on_oops", NULL);
 	if (p) {
@@ -63,15 +80,6 @@ trace_boot_set_ftrace_options(struct trace_array *tr, struct skc_node *node)
 
 	if (skc_node_find_value(node, "tp_printk", NULL))
 		trace_init_tracepoint_printk();
-
-	p = skc_node_find_value(node, "buffer_size", NULL);
-	if (p && *p != '\0') {
-		v = memparse(p, NULL);
-		if (v < PAGE_SIZE)
-			pr_err("Buffer size is too small: %s\n", p);
-		if (tracing_resize_ring_buffer(tr, v, RING_BUFFER_ALL_CPUS) < 0)
-			pr_err("Failed to resize trace buffer to %s\n", p);
-	}
 
 	if (skc_node_find_value(node, "alloc_snapshot", NULL))
 		if (tracing_alloc_snapshot() < 0)
@@ -266,6 +274,40 @@ trace_boot_enable_tracer(struct trace_array *tr, struct skc_node *node)
 	}
 }
 
+static void __init
+trace_boot_init_one_instance(struct trace_array *tr, struct skc_node *node)
+{
+	trace_boot_set_instance_options(tr, node);
+	trace_boot_init_events(tr, node);
+	trace_boot_enable_events(tr, node);
+	trace_boot_enable_tracer(tr, node);
+}
+
+static void __init
+trace_boot_init_instances(struct skc_node *node)
+{
+	struct skc_node *inode;
+	struct trace_array *tr;
+	const char *p;
+
+	node = skc_node_find_child(node, "instance");
+	if (!node)
+		return;
+
+	skc_node_for_each_child(node, inode) {
+		p = skc_node_get_data(inode);
+		if (!p || *p == '\0')
+			continue;
+
+		tr = trace_array_create(p);
+		if (IS_ERR(tr)) {
+			pr_err("Failed to create instance %s\n", p);
+			continue;
+		}
+		trace_boot_init_one_instance(tr, inode);
+	}
+}
+
 static int __init trace_boot_init(void)
 {
 	struct skc_node *trace_node;
@@ -279,10 +321,10 @@ static int __init trace_boot_init(void)
 	if (!tr)
 		return 0;
 
-	trace_boot_set_ftrace_options(tr, trace_node);
-	trace_boot_init_events(tr, trace_node);
-	trace_boot_enable_events(tr, trace_node);
-	trace_boot_enable_tracer(tr, trace_node);
+	trace_boot_set_global_options(tr, trace_node);
+	/* Global trace array is also one instance */
+	trace_boot_init_one_instance(tr, trace_node);
+	trace_boot_init_instances(trace_node);
 
 	return 0;
 }
