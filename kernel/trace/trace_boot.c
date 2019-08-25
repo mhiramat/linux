@@ -80,6 +80,7 @@ trace_boot_set_ftrace_options(struct trace_array *tr, struct skc_node *node)
 
 #ifdef CONFIG_EVENT_TRACING
 extern int ftrace_set_clr_event(struct trace_array *tr, char *buf, int set);
+extern int trigger_process_regex(struct trace_event_file *file, char *buff);
 
 static void __init
 trace_boot_enable_events(struct trace_array *tr, struct skc_node *node)
@@ -98,8 +99,66 @@ trace_boot_enable_events(struct trace_array *tr, struct skc_node *node)
 			pr_err("Failed to enable event: %s\n", p);
 	}
 }
+
+static void __init
+trace_boot_init_one_event(struct trace_array *tr, struct skc_node *gnode,
+			  struct skc_node *enode)
+{
+	struct trace_event_file *file;
+	struct skc_node *anode;
+	char buf[MAX_BUF_LEN];
+	const char *p, *group, *event;
+
+	group = skc_node_get_data(gnode);
+	event = skc_node_get_data(enode);
+
+	mutex_lock(&event_mutex);
+	file = find_event_file(tr, group, event);
+	if (!file) {
+		pr_err("Failed to find event: %s:%s\n", group, event);
+		goto out;
+	}
+
+	p = skc_node_find_value(enode, "filter", NULL);
+	if (p && *p != '\0') {
+		if (strlcpy(buf, p, ARRAY_SIZE(buf)) >= ARRAY_SIZE(buf))
+			pr_err("filter string is too long: %s\n", p);
+		else if (apply_event_filter(file, buf) < 0)
+			pr_err("Failed to apply filter: %s\n", buf);
+	}
+
+	skc_node_for_each_array_value(enode, "actions", anode, p) {
+		if (strlcpy(buf, p, ARRAY_SIZE(buf)) >= ARRAY_SIZE(buf))
+			pr_err("action string is too long: %s\n", p);
+		else if (trigger_process_regex(file, buf) < 0)
+			pr_err("Failed to apply an action: %s\n", buf);
+	}
+
+	if (skc_node_find_value(enode, "enable", NULL)) {
+		if (trace_event_enable_disable(file, 1, 0) < 0)
+			pr_err("Failed to enable event node: %s:%s\n",
+				group, event);
+	}
+out:
+	mutex_unlock(&event_mutex);
+}
+
+static void __init
+trace_boot_init_events(struct trace_array *tr, struct skc_node *node)
+{
+	struct skc_node *gnode, *enode;
+
+	node = skc_node_find_child(node, "event");
+	if (!node)
+		return;
+	/* per-event key starts with "event.GROUP.EVENT" */
+	skc_node_for_each_child(node, gnode)
+		skc_node_for_each_child(gnode, enode)
+			trace_boot_init_one_event(tr, gnode, enode);
+}
 #else
 #define trace_boot_enable_events(tr, node) do {} while (0)
+#define trace_boot_init_events(tr, node) do {} while (0)
 #endif
 
 static void __init
@@ -128,6 +187,7 @@ static int __init trace_boot_init(void)
 		return 0;
 
 	trace_boot_set_ftrace_options(tr, trace_node);
+	trace_boot_init_events(tr, trace_node);
 	trace_boot_enable_events(tr, trace_node);
 	trace_boot_enable_tracer(tr, trace_node);
 
