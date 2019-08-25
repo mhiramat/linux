@@ -15368,6 +15368,7 @@ S:	Maintained
 F:	lib/skc.c
 F:	fs/proc/sup_cmdline.c
 F:	include/linux/skc.h
+F:	Documentation/admin-guide/skc.rst
 
 SUN3/3X
 M:	Sam Creasey <sammy@sammy.net>
