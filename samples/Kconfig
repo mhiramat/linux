@@ -5,6 +5,12 @@ menuconfig SAMPLES
 	  You can build and test sample kernel code here.
 
 if SAMPLES
+config SAMPLE_BUGWARN
+	tristate "Build sample of BUG and WARN"
+	depends on EVENT_TRACING && m
+	help
+	  This is a dummy module.
+
 
 config SAMPLE_TRACE_EVENTS
 	tristate "Build trace_events examples -- loadable modules only"
