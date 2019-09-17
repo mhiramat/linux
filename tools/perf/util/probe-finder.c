@@ -249,6 +249,12 @@ static_var:
 		ref = true;
 	} else if (op->atom == DW_OP_regx) {
 		regn = op->number;
+	} else if (op->atom >= DW_OP_lit0 && op->atom <= DW_OP_lit31 &&
+		   immediate_value_is_supported()) {
+		ret = asprintf(&tvar->value, "\\%d", op->atom - DW_OP_lit0);
+		if (ret < 0)
+			return -ENOMEM;
+		return ret2;
 	} else {
 		pr_debug("DW_OP %x is not supported.\n", op->atom);
 		return -ENOTSUP;
