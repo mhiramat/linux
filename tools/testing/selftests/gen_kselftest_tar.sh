@@ -38,16 +38,16 @@ main()
 	esac
 	fi
 
-	install_dir=./kselftest
+	tmpdir=`mktemp -d ./install-XXXXXX` || exit 1
 
 # Run install using INSTALL_KSFT_PATH override to generate install
 # directory
-./kselftest_install.sh
-tar $copts kselftest${ext} $install_dir
+./kselftest_install.sh $tmpdir
+tar $copts kselftest${ext} -C $tmpdir kselftest
 echo "Kselftest archive kselftest${ext} created!"
 
 # clean up install directory
-rm -rf kselftest
+rm -rf $tmpdir
 }
 
 main "$@"
