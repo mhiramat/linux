@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <stdlib.h>
+#include <asm/bitsperlong.h>
 
 static void pass(const char *fmt, unsigned long a, unsigned long b)
 {
@@ -44,10 +45,18 @@ static void fail(const char *fmt, unsigned long a, unsigned long b)
 	exit(1);
 }
 
+#if __BITS_PER_LONG == 32
+# define VA_MAX (3UL << 30)
+#elif __BITS_PER_LONG == 64
+# define VA_MAX (1UL << 32)
+#else
+# define VA_MAX 0
+#endif
+
 int main(void)
 {
 	const int PAGE_SIZE = sysconf(_SC_PAGESIZE);
-	const unsigned long va_max = 1UL << 32;
+	const unsigned long va_max = VA_MAX;
 	unsigned long va;
 	void *p;
 	int fd;
