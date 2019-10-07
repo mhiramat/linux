@@ -21,6 +21,7 @@ main()
 		exit 1;
 	else
 		install_loc=$1
+		shift 1
 		echo "$0: Installing in specified location - $install_loc ..."
 	fi
 
@@ -29,7 +30,12 @@ main()
 # Create install directory
 	mkdir -p $install_dir
 # Build tests
-	INSTALL_PATH=$install_dir make install
+	if [ "$#" -ne 0 ]; then
+		echo "Install only $@"
+		TARGETS="$@" INSTALL_PATH=$install_dir make install
+	else
+		INSTALL_PATH=$install_dir make install
+	fi
 }
 
 main "$@"

@@ -35,14 +35,15 @@ main()
 			echo "Unknown tarball format $1"
 			exit 1
 			;;
-	esac
+		esac
+		shift 1
 	fi
 
 	tmpdir=`mktemp -d ./install-XXXXXX` || exit 1
 
 # Run install using INSTALL_KSFT_PATH override to generate install
 # directory
-./kselftest_install.sh $tmpdir
+./kselftest_install.sh $tmpdir $@
 tar $copts kselftest${ext} -C $tmpdir kselftest
 echo "Kselftest archive kselftest${ext} created!"
 
