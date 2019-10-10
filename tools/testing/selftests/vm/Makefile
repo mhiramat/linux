@@ -31,6 +31,6 @@ TEST_FILES := test_vmalloc.sh
 KSFT_KHDR_INSTALL := 1
 include ../lib.mk
 
-$(OUTPUT)/userfaultfd: LDLIBS += -lpthread
+$(OUTPUT)/userfaultfd: LDLIBS += -pthread
 
 $(OUTPUT)/mlock-random-test: LDLIBS += -lcap

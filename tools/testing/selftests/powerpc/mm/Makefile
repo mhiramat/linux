@@ -20,4 +20,4 @@ $(OUTPUT)/large_vm_fork_separation: CFLAGS += -m64
 $(OUTPUT)/tempfile:
 	dd if=/dev/zero of=$@ bs=64k count=1
 
-$(OUTPUT)/tlbie_test: LDLIBS += -lpthread
+$(OUTPUT)/tlbie_test: LDLIBS += -pthread

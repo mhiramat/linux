@@ -11,8 +11,8 @@ $(TEST_GEN_PROGS): ../harness.c
 
 $(OUTPUT)/context_switch: ../utils.c
 $(OUTPUT)/context_switch: CFLAGS += -maltivec -mvsx -mabi=altivec
-$(OUTPUT)/context_switch: LDLIBS += -lpthread
+$(OUTPUT)/context_switch: LDLIBS += -pthread
 
-$(OUTPUT)/fork: LDLIBS += -lpthread
+$(OUTPUT)/fork: LDLIBS += -pthread
 
 $(OUTPUT)/exec_target: CFLAGS += -static -nostartfiles

@@ -6,6 +6,6 @@ TEST_GEN_PROGS := dscr_default_test dscr_explicit_test dscr_user_test	\
 top_srcdir = ../../../../..
 include ../../lib.mk
 
-$(OUTPUT)/dscr_default_test: LDLIBS += -lpthread
+$(OUTPUT)/dscr_default_test: LDLIBS += -pthread
 
 $(TEST_GEN_PROGS): ../harness.c
