@@ -44,7 +44,14 @@ main()
 # Run install using INSTALL_KSFT_PATH override to generate install
 # directory
 ./kselftest_install.sh $tmpdir $@
-tar $copts kselftest${ext} -C $tmpdir kselftest
+
+echo "Finding linked libraries"
+(cd $tmpdir
+find kselftest/ -type f | while read x ; do
+  ldd $x | cut -d'(' -f 1 | grep -v dynamic | cut -d '>' -f 2 ;
+done | sort | uniq | xargs tar -ch | tar -x )
+
+tar $copts kselftest${ext} -C $tmpdir kselftest lib
 echo "Kselftest archive kselftest${ext} created!"
 
 # clean up install directory
