@@ -111,6 +111,7 @@ configure specific aspects of kernel behavior to your liking.
    svga
    wimax/index
    video-output
+   bootconfig
 
 .. only::  subproject and html
 
