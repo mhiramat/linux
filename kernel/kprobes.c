@@ -319,6 +319,7 @@ static inline void reset_kprobe_instance(void)
  * 	- under the kprobe_mutex - during kprobe_[un]register()
  * 				OR
  * 	- with preemption disabled - from arch/xxx/kernel/kprobes.c
+ * In both cases, caller must disable preempt (or acquire rcu_read_lock)
  */
 struct kprobe *get_kprobe(void *addr)
 {
@@ -435,6 +436,7 @@ static int kprobe_queued(struct kprobe *p)
 /*
  * Return an optimized kprobe whose optimizing code replaces
  * instructions including addr (exclude breakpoint).
+ * This must be called with locking kprobe_mutex.
  */
 static struct kprobe *get_optimized_kprobe(unsigned long addr)
 {
@@ -442,9 +444,12 @@ static struct kprobe *get_optimized_kprobe(unsigned long addr)
 	struct kprobe *p = NULL;
 	struct optimized_kprobe *op;
 
+	lockdep_assert_held(&kprobe_mutex);
+	rcu_read_lock();
 	/* Don't check i == 0, since that is a breakpoint case. */
 	for (i = 1; !p && i < MAX_OPTIMIZED_LENGTH; i++)
 		p = get_kprobe((void *)(addr - i));
+	rcu_read_unlock();	/* We are safe because kprobe_mutex is held */
 
 	if (p && kprobe_optready(p)) {
 		op = container_of(p, struct optimized_kprobe, kp);
@@ -1478,18 +1483,21 @@ static struct kprobe *__get_valid_kprobe(struct kprobe *p)
 {
 	struct kprobe *ap, *list_p;
 
+	lockdep_assert_held(&kprobe_mutex);
+	rcu_read_lock();
 	ap = get_kprobe(p->addr);
 	if (unlikely(!ap))
-		return NULL;
+		goto out;
 
 	if (p != ap) {
 		list_for_each_entry_rcu(list_p, &ap->list, list)
 			if (list_p == p)
 			/* kprobe p is a valid probe */
-				goto valid;
-		return NULL;
+				goto out;
+		ap = NULL;
 	}
-valid:
+out:
+	rcu_read_unlock();	/* We are safe because kprobe_mutex is held */
 	return ap;
 }
 
@@ -1602,7 +1610,9 @@ int register_kprobe(struct kprobe *p)
 
 	mutex_lock(&kprobe_mutex);
 
+	rcu_read_lock();
 	old_p = get_kprobe(p->addr);
+	rcu_read_unlock();	/* We are safe because kprobe_mutex is held */
 	if (old_p) {
 		/* Since this may unoptimize old_p, locking text_mutex. */
 		ret = register_aggr_kprobe(old_p, p);
