@@ -82,6 +82,7 @@ static LIST_HEAD(kprobe_blacklist);
  */
 struct kprobe_insn_page {
 	struct list_head list;
+	struct rcu_head rcu;
 	kprobe_opcode_t *insns;		/* Page of instruction slots */
 	struct kprobe_insn_cache *cache;
 	int nused;
@@ -187,6 +188,13 @@ out:
 	return slot;
 }
 
+static void free_kprobe_insn_page(struct rcu_head *head)
+{
+	struct kprobe_insn_page *kip = container_of(head, typeof(*kip), rcu);
+
+	kfree(kip);
+}
+
 /* Return 1 if all garbages are collected, otherwise 0. */
 static int collect_one_slot(struct kprobe_insn_page *kip, int idx)
 {
@@ -201,9 +209,8 @@ static int collect_one_slot(struct kprobe_insn_page *kip, int idx)
 		 */
 		if (!list_is_singular(&kip->list)) {
 			list_del_rcu(&kip->list);
-			synchronize_rcu();
 			kip->cache->free(kip->insns);
-			kfree(kip);
+			call_rcu(&kip->rcu, free_kprobe_insn_page);
 		}
 		return 1;
 	}
