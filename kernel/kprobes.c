@@ -215,8 +215,8 @@ static int collect_garbage_slots(struct kprobe_insn_cache *c)
 {
 	struct kprobe_insn_page *kip, *next;
 
-	/* Ensure no-one is interrupted on the garbages */
-	synchronize_rcu();
+	/* Ensure no-one is running on the garbages. */
+	synchronize_rcu_tasks();
 
 	list_for_each_entry_safe(kip, next, &c->pages, list) {
 		int i;

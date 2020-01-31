@@ -587,7 +587,6 @@ static void setup_singlestep(struct kprobe *p, struct pt_regs *regs,
 	if (setup_detour_execution(p, regs, reenter))
 		return;
 
-#if !defined(CONFIG_PREEMPTION)
 	if (p->ainsn.boostable && !p->post_handler) {
 		/* Boost up -- we can execute copied instructions directly */
 		if (!reenter)
@@ -600,7 +599,6 @@ static void setup_singlestep(struct kprobe *p, struct pt_regs *regs,
 		regs->ip = (unsigned long)p->ainsn.insn;
 		return;
 	}
-#endif
 	if (reenter) {
 		save_previous_kprobe(kcb);
 		set_current_kprobe(p, regs, kcb);

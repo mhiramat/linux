@@ -841,7 +841,6 @@ static int __kprobes pre_kprobes_handler(struct die_args *args)
 		return 1;
 	}
 
-#if !defined(CONFIG_PREEMPTION)
 	if (p->ainsn.inst_flag == INST_FLAG_BOOSTABLE && !p->post_handler) {
 		/* Boost up -- we can execute copied instructions directly */
 		ia64_psr(regs)->ri = p->ainsn.slot;
@@ -853,7 +852,7 @@ static int __kprobes pre_kprobes_handler(struct die_args *args)
 		preempt_enable_no_resched();
 		return 1;
 	}
-#endif
+
 	prepare_ss(p, regs);
 	kcb->kprobe_status = KPROBE_HIT_SS;
 	return 1;
