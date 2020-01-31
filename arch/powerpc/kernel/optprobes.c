@@ -53,7 +53,6 @@ struct kprobe_insn_cache kprobe_ppc_optinsn_slots = {
 	/* insn_size initialized later */
 	.alloc = __ppc_alloc_insn_page,
 	.free = __ppc_free_insn_page,
-	.nr_garbage = 0,
 };
 
 /*

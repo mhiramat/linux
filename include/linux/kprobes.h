@@ -244,7 +244,7 @@ struct kprobe_insn_cache {
 	void (*free)(void *);	/* free insn page */
 	struct list_head pages; /* list of kprobe_insn_page */
 	size_t insn_size;	/* size of instruction slot */
-	int nr_garbage;
+	int generation;		/* dirty generation */
 	struct work_struct work;
 };
 
