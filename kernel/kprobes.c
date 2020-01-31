@@ -459,6 +459,7 @@ static struct kprobe *get_optimized_kprobe(unsigned long addr)
 static LIST_HEAD(optimizing_list);
 static LIST_HEAD(unoptimizing_list);
 static LIST_HEAD(freeing_list);
+static int kprobe_optimizer_queue_update;
 
 static void kprobe_optimizer(struct work_struct *work);
 static DECLARE_DELAYED_WORK(optimizing_work, kprobe_optimizer);
@@ -549,12 +550,22 @@ static void do_free_cleaned_kprobes(void)
 static void kick_kprobe_optimizer(void)
 {
 	schedule_delayed_work(&optimizing_work, OPTIMIZE_DELAY);
+	kprobe_optimizer_queue_update++;
 }
 
 /* Kprobe jump optimizer */
 static void kprobe_optimizer(struct work_struct *work)
 {
 	mutex_lock(&kprobe_mutex);
+
+	/*
+	 * If new kprobe is queued in optimized/unoptimized list while
+	 * OPTIMIZE_DELAY waiting period, wait again for a series of
+	 * probes registration/unregistrations.
+	 */
+	if (kprobe_optimizer_queue_update > 1)
+		goto end;
+
 	cpus_read_lock();
 	mutex_lock(&text_mutex);
 	/* Lock modules while optimizing kprobes */
@@ -587,6 +598,8 @@ static void kprobe_optimizer(struct work_struct *work)
 	mutex_unlock(&text_mutex);
 	cpus_read_unlock();
 
+end:
+	kprobe_optimizer_queue_update = 0;
 	/* Step 5: Kick optimizer again if needed */
 	if (!list_empty(&optimizing_list) || !list_empty(&unoptimizing_list))
 		kick_kprobe_optimizer();
