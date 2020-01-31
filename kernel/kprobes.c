@@ -463,7 +463,8 @@ static int kprobe_optimizer_queue_update;
 
 static void kprobe_optimizer(struct work_struct *work);
 static DECLARE_DELAYED_WORK(optimizing_work, kprobe_optimizer);
-#define OPTIMIZE_DELAY 5
+/* Wait 1 second for starting optimization */
+#define OPTIMIZE_DELAY HZ
 
 /*
  * Optimize (replace a breakpoint with a jump) kprobes listed on
