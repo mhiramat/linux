@@ -136,8 +136,7 @@ kprobe_opcode_t *__get_insn_slot(struct kprobe_insn_cache *c)
 	/* Since the slot array is not protected by rcu, we need a mutex */
 	mutex_lock(&c->mutex);
  retry:
-	rcu_read_lock();
-	list_for_each_entry_rcu(kip, &c->pages, list) {
+	list_for_each_entry(kip, &c->pages, list) {
 		if (kip->nused < slots_per_page(c)) {
 			int i;
 			for (i = 0; i < slots_per_page(c); i++) {
@@ -145,7 +144,6 @@ kprobe_opcode_t *__get_insn_slot(struct kprobe_insn_cache *c)
 					kip->slot_used[i] = SLOT_USED;
 					kip->nused++;
 					slot = kip->insns + (i * c->insn_size);
-					rcu_read_unlock();
 					goto out;
 				}
 			}
@@ -154,7 +152,6 @@ kprobe_opcode_t *__get_insn_slot(struct kprobe_insn_cache *c)
 			WARN_ON(1);
 		}
 	}
-	rcu_read_unlock();
 
 	/* If there are any garbage slots, collect it and try again. */
 	if (c->nr_garbage && collect_garbage_slots(c) == 0)
@@ -239,8 +236,7 @@ void __free_insn_slot(struct kprobe_insn_cache *c,
 	long idx;
 
 	mutex_lock(&c->mutex);
-	rcu_read_lock();
-	list_for_each_entry_rcu(kip, &c->pages, list) {
+	list_for_each_entry(kip, &c->pages, list) {
 		idx = ((long)slot - (long)kip->insns) /
 			(c->insn_size * sizeof(kprobe_opcode_t));
 		if (idx >= 0 && idx < slots_per_page(c))
@@ -250,7 +246,6 @@ void __free_insn_slot(struct kprobe_insn_cache *c,
 	WARN_ON(1);
 	kip = NULL;
 out:
-	rcu_read_unlock();
 	/* Mark and sweep: this may sleep */
 	if (kip) {
 		/* Check double free */
