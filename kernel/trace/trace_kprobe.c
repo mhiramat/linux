@@ -1707,9 +1707,7 @@ void destroy_local_trace_kprobe(struct trace_event_call *event_call)
 		return;
 	}
 
-	__unregister_trace_kprobe(tk);
-
-	free_trace_kprobe(tk);
+	__unregister_trace_kprobe_async(tk);
 }
 #endif /* CONFIG_PERF_EVENTS */
 
