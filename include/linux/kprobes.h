@@ -98,6 +98,9 @@ struct kprobe {
 	 * Protected by kprobe_mutex after this kprobe is registered.
 	 */
 	u32 flags;
+
+	/* For asynchronous unregistration callback */
+	struct rcu_head rcu;
 };
 
 /* Kprobe status flags */
@@ -363,6 +366,12 @@ int register_kretprobe(struct kretprobe *rp);
 void unregister_kretprobe(struct kretprobe *rp);
 int register_kretprobes(struct kretprobe **rps, int num);
 void unregister_kretprobes(struct kretprobe **rps, int num);
+
+/* Async unregister APIs (Do not wait for rcu sync) */
+void kprobe_free_callback(struct rcu_head *head);
+void kretprobe_free_callback(struct rcu_head *head);
+void unregister_kprobe_async(struct kprobe *kp, rcu_callback_t free_cb);
+void unregister_kretprobe_async(struct kretprobe *kp, rcu_callback_t free_cb);
 
 void kprobe_flush_task(struct task_struct *tk);
 void recycle_rp_inst(struct kretprobe_instance *ri, struct hlist_head *head);

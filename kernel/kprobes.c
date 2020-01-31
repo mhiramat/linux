@@ -1854,6 +1854,31 @@ void unregister_kprobes(struct kprobe **kps, int num)
 }
 EXPORT_SYMBOL_GPL(unregister_kprobes);
 
+void kprobe_free_callback(struct rcu_head *head)
+{
+	struct kprobe *kp = container_of(head, struct kprobe, rcu);
+
+	__unregister_kprobe_bottom(kp);
+}
+
+/*
+ * If you call this function, you must call kprobe_free_callback() at first
+ * in your free_cb(), or set free_cb = NULL.
+ */
+void unregister_kprobe_async(struct kprobe *kp, rcu_callback_t free_cb)
+{
+	mutex_lock(&kprobe_mutex);
+	if (__unregister_kprobe_top(kp) < 0)
+		kp->addr = NULL;
+	mutex_unlock(&kprobe_mutex);
+
+	if (!kp->addr)
+		return;
+	if (!free_cb)
+		free_cb = kprobe_free_callback;
+	call_rcu(&kp->rcu, free_cb);
+}
+
 int __weak kprobe_exceptions_notify(struct notifier_block *self,
 					unsigned long val, void *data)
 {
@@ -2047,6 +2072,29 @@ void unregister_kretprobes(struct kretprobe **rps, int num)
 }
 EXPORT_SYMBOL_GPL(unregister_kretprobes);
 
+void kretprobe_free_callback(struct rcu_head *head)
+{
+	struct kprobe *kp = container_of(head, struct kprobe, rcu);
+	struct kretprobe *rp = container_of(kp, struct kretprobe, kp);
+
+	__unregister_kprobe_bottom(kp);
+	cleanup_rp_inst(rp);
+}
+
+void unregister_kretprobe_async(struct kretprobe *rp, rcu_callback_t free_cb)
+{
+	mutex_lock(&kprobe_mutex);
+	if (__unregister_kprobe_top(&rp->kp) < 0)
+		rp->kp.addr = NULL;
+	mutex_unlock(&kprobe_mutex);
+
+	if (!rp->kp.addr)
+		return;
+	if (!free_cb)
+		free_cb = kretprobe_free_callback;
+	call_rcu(&rp->kp.rcu, free_cb);
+}
+
 #else /* CONFIG_KRETPROBES */
 int register_kretprobe(struct kretprobe *rp)
 {
@@ -2075,6 +2123,14 @@ static int pre_handler_kretprobe(struct kprobe *p, struct pt_regs *regs)
 	return 0;
 }
 NOKPROBE_SYMBOL(pre_handler_kretprobe);
+
+void kretprobe_free_callback(struct rcu_head *head)
+{
+}
+
+void unregister_kretprobe_async(struct kretprobe *rp, rcu_callback_t free_cb)
+{
+}
 
 #endif /* CONFIG_KRETPROBES */
 
