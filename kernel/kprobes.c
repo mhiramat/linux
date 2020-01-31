@@ -121,8 +121,15 @@ struct kprobe_insn_cache kprobe_insn_slots = {
 	.pages = LIST_HEAD_INIT(kprobe_insn_slots.pages),
 	.insn_size = MAX_INSN_SIZE,
 	.nr_garbage = 0,
+	.work = __WORK_INITIALIZER(kprobe_insn_slots.work,
+				   kprobe_insn_cache_gc),
 };
-static int collect_garbage_slots(struct kprobe_insn_cache *c);
+
+static void kick_kprobe_insn_cache_gc(struct kprobe_insn_cache *c)
+{
+	if (!work_pending(&c->work))
+		schedule_work(&c->work);
+}
 
 /**
  * __get_insn_slot() - Find a slot on an executable page for an instruction.
@@ -135,7 +142,6 @@ kprobe_opcode_t *__get_insn_slot(struct kprobe_insn_cache *c)
 
 	/* Since the slot array is not protected by rcu, we need a mutex */
 	mutex_lock(&c->mutex);
- retry:
 	list_for_each_entry(kip, &c->pages, list) {
 		if (kip->nused < slots_per_page(c)) {
 			int i;
@@ -153,11 +159,7 @@ kprobe_opcode_t *__get_insn_slot(struct kprobe_insn_cache *c)
 		}
 	}
 
-	/* If there are any garbage slots, collect it and try again. */
-	if (c->nr_garbage && collect_garbage_slots(c) == 0)
-		goto retry;
-
-	/* All out of space.  Need to allocate a new page. */
+	/* All out of space. Need to allocate a new page. */
 	kip = kmalloc(KPROBE_INSN_PAGE_SIZE(slots_per_page(c)), GFP_KERNEL);
 	if (!kip)
 		goto out;
@@ -208,10 +210,12 @@ static int collect_one_slot(struct kprobe_insn_page *kip, int idx)
 	return 0;
 }
 
-static int collect_garbage_slots(struct kprobe_insn_cache *c)
+void kprobe_insn_cache_gc(struct work_struct *work)
 {
+	struct kprobe_insn_cache *c = container_of(work, typeof(*c), work);
 	struct kprobe_insn_page *kip, *next;
 
+	mutex_lock(&c->mutex);
 	/* Ensure no-one is running on the garbages. */
 	synchronize_rcu_tasks();
 
@@ -221,12 +225,13 @@ static int collect_garbage_slots(struct kprobe_insn_cache *c)
 			continue;
 		kip->ngarbage = 0;	/* we will collect all garbages */
 		for (i = 0; i < slots_per_page(c); i++) {
-			if (kip->slot_used[i] == SLOT_DIRTY && collect_one_slot(kip, i))
+			if (kip->slot_used[i] == SLOT_DIRTY &&
+			    collect_one_slot(kip, i))
 				break;
 		}
 	}
 	c->nr_garbage = 0;
-	return 0;
+	mutex_unlock(&c->mutex);
 }
 
 void __free_insn_slot(struct kprobe_insn_cache *c,
@@ -254,7 +259,7 @@ out:
 			kip->slot_used[idx] = SLOT_DIRTY;
 			kip->ngarbage++;
 			if (++c->nr_garbage > slots_per_page(c))
-				collect_garbage_slots(c);
+				kick_kprobe_insn_cache_gc(c);
 		} else {
 			collect_one_slot(kip, idx);
 		}
@@ -294,6 +299,8 @@ struct kprobe_insn_cache kprobe_optinsn_slots = {
 	.pages = LIST_HEAD_INIT(kprobe_optinsn_slots.pages),
 	/* .insn_size is initialized later */
 	.nr_garbage = 0,
+	.work = __WORK_INITIALIZER(kprobe_optinsn_slots.work,
+				   kprobe_insn_cache_gc),
 };
 #endif
 #endif

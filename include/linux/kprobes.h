@@ -245,6 +245,7 @@ struct kprobe_insn_cache {
 	struct list_head pages; /* list of kprobe_insn_page */
 	size_t insn_size;	/* size of instruction slot */
 	int nr_garbage;
+	struct work_struct work;
 };
 
 #ifdef __ARCH_WANT_KPROBES_INSN_SLOT
@@ -254,6 +255,7 @@ extern void __free_insn_slot(struct kprobe_insn_cache *c,
 /* sleep-less address checking routine  */
 extern bool __is_insn_slot_addr(struct kprobe_insn_cache *c,
 				unsigned long addr);
+void kprobe_insn_cache_gc(struct work_struct *work);
 
 #define DEFINE_INSN_CACHE_OPS(__name)					\
 extern struct kprobe_insn_cache kprobe_##__name##_slots;		\
