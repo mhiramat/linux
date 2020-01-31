@@ -551,7 +551,35 @@ static void __unregister_trace_kprobe(struct trace_kprobe *tk)
 	}
 }
 
-/* Unregister a trace_probe and probe_event */
+static void free_trace_kprobe_cb(struct rcu_head *head)
+{
+	struct kprobe *kp = container_of(head, struct kprobe, rcu);
+	struct kretprobe *rp = container_of(kp, struct kretprobe, kp);
+	struct trace_kprobe *tk = container_of(rp, struct trace_kprobe, rp);
+
+	if (trace_kprobe_is_return(tk))
+		kretprobe_free_callback(head);
+	else
+		kprobe_free_callback(head);
+	free_trace_kprobe(tk);
+}
+
+static void __unregister_trace_kprobe_async(struct trace_kprobe *tk)
+{
+	if (trace_kprobe_is_registered(tk)) {
+		if (trace_kprobe_is_return(tk))
+			unregister_kretprobe_async(&tk->rp,
+						   free_trace_kprobe_cb);
+		else
+			unregister_kprobe_async(&tk->rp.kp,
+						free_trace_kprobe_cb);
+	}
+}
+
+/*
+ * Unregister a trace_probe and probe_event asynchronously.
+ * Caller must wait for RCU.
+ */
 static int unregister_trace_kprobe(struct trace_kprobe *tk)
 {
 	/* If other probes are on the event, just unregister kprobe */
@@ -570,9 +598,17 @@ static int unregister_trace_kprobe(struct trace_kprobe *tk)
 		return -EBUSY;
 
 unreg:
-	__unregister_trace_kprobe(tk);
 	dyn_event_remove(&tk->devent);
+	/*
+	 * This trace_probe_unlink() can free the trace_event_call linked to
+	 * this probe.
+	 * We can do this before unregistering because this probe is
+	 * already disabled and the disabling process waits enough period
+	 * for all handlers finished. IOW, the disabling process must wait
+	 * RCU sync at least once before returning to its caller.
+	 */
 	trace_probe_unlink(&tk->tp);
+	__unregister_trace_kprobe_async(tk);
 
 	return 0;
 }
@@ -928,11 +964,7 @@ static int create_or_delete_trace_kprobe(int argc, char **argv)
 static int trace_kprobe_release(struct dyn_event *ev)
 {
 	struct trace_kprobe *tk = to_trace_kprobe(ev);
-	int ret = unregister_trace_kprobe(tk);
-
-	if (!ret)
-		free_trace_kprobe(tk);
-	return ret;
+	return unregister_trace_kprobe(tk);
 }
 
 static int trace_kprobe_show(struct seq_file *m, struct dyn_event *ev)

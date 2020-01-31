@@ -70,6 +70,9 @@ int dyn_event_release(int argc, char **argv, struct dyn_event_operations *type)
 		if (ret)
 			break;
 	}
+
+	/* Wait for running events because of async event unregistration */
+	synchronize_rcu();
 	mutex_unlock(&event_mutex);
 
 	return ret;
@@ -164,6 +167,8 @@ int dyn_events_release_all(struct dyn_event_operations *type)
 		if (ret)
 			break;
 	}
+	/* Wait for running events because of async event unregistration */
+	synchronize_rcu();
 out:
 	mutex_unlock(&event_mutex);
 
