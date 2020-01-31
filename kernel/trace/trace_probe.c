@@ -1067,6 +1067,13 @@ struct event_file_link *trace_probe_get_file_link(struct trace_probe *tp,
 	return NULL;
 }
 
+static void event_file_link_free_cb(struct rcu_head *head)
+{
+	struct event_file_link *link = container_of(head, typeof(*link), rcu);
+
+	kfree(link);
+}
+
 int trace_probe_remove_file(struct trace_probe *tp,
 			    struct trace_event_file *file)
 {
@@ -1077,8 +1084,7 @@ int trace_probe_remove_file(struct trace_probe *tp,
 		return -ENOENT;
 
 	list_del_rcu(&link->list);
-	synchronize_rcu();
-	kfree(link);
+	call_rcu(&link->rcu, event_file_link_free_cb);
 
 	if (list_empty(&tp->event->files))
 		trace_probe_clear_flag(tp, TP_FLAG_TRACE);

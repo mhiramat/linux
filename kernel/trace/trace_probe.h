@@ -243,6 +243,7 @@ struct trace_probe {
 struct event_file_link {
 	struct trace_event_file		*file;
 	struct list_head		list;
+	struct rcu_head			rcu;
 };
 
 static inline bool trace_probe_test_flag(struct trace_probe *tp,

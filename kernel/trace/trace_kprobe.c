@@ -328,10 +328,25 @@ static inline int __enable_trace_kprobe(struct trace_kprobe *tk)
 	return ret;
 }
 
+atomic_t trace_kprobe_disabled_finished;
+
+static void trace_kprobe_disabled_handlers_finish(void)
+{
+	if (atomic_read(&trace_kprobe_disabled_finished))
+		synchronize_rcu();
+}
+
+static void trace_kprobe_disabled_finish_cb(struct rcu_head *head)
+{
+	atomic_dec(&trace_kprobe_disabled_finished);
+	kfree(head);
+}
+
 static void __disable_trace_kprobe(struct trace_probe *tp)
 {
 	struct trace_probe *pos;
 	struct trace_kprobe *tk;
+	struct rcu_head *head;
 
 	list_for_each_entry(pos, trace_probe_probe_list(tp), list) {
 		tk = container_of(pos, struct trace_kprobe, tp);
@@ -342,6 +357,13 @@ static void __disable_trace_kprobe(struct trace_probe *tp)
 		else
 			disable_kprobe(&tk->rp.kp);
 	}
+
+	/* Handler exit gatekeeper */
+	head = kzalloc(sizeof(*head), GFP_KERNEL);
+	if (WARN_ON(!head))
+		return;
+	atomic_inc(&trace_kprobe_disabled_finished);
+	call_rcu(head, trace_kprobe_disabled_finish_cb);
 }
 
 /*
@@ -422,13 +444,11 @@ static int disable_trace_kprobe(struct trace_event_call *call,
 
  out:
 	if (file)
-		/*
-		 * Synchronization is done in below function. For perf event,
-		 * file == NULL and perf_trace_event_unreg() calls
-		 * tracepoint_synchronize_unregister() to ensure synchronize
-		 * event. We don't need to care about it.
-		 */
 		trace_probe_remove_file(tp, file);
+	/*
+	 * We have no RCU synchronization here. Caller must wait for the
+	 * completion of disabling.
+	 */
 
 	return 0;
 }
@@ -541,6 +561,9 @@ static int unregister_trace_kprobe(struct trace_kprobe *tk)
 	/* Enabled event can not be unregistered */
 	if (trace_probe_is_enabled(&tk->tp))
 		return -EBUSY;
+
+	/* Make sure all disabled trace_kprobe handlers finished */
+	trace_kprobe_disabled_handlers_finish();
 
 	/* Will fail if probe is being used by ftrace or perf */
 	if (unregister_kprobe_event(tk))
