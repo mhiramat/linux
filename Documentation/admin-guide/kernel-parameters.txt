@@ -439,6 +439,12 @@
 
 	bootmem_debug	[KNL] Enable bootmem allocator debug messages.
 
+	bootconfig	[KNL]
+			Extended command line options can be added to an initrd
+			and this will cause the kernel to look for it.
+
+			See Documentation/admin-guide/bootconfig.rst
+
 	bert_disable	[ACPI]
 			Disable BERT OS support on buggy BIOSes.
 
