@@ -54,6 +54,7 @@ configure specific aspects of kernel behavior to your liking.
 .. toctree::
    :maxdepth: 1
 
+   bootconfig
    initrd
    cgroup-v2
    serial-console
