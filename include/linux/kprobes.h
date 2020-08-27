@@ -157,6 +157,7 @@ struct kretprobe {
 
 struct kretprobe_instance {
 	union {
+		struct llist_node llist;
 		struct hlist_node hlist;
 		struct rcu_head rcu;
 	};
