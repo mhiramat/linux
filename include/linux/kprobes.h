@@ -27,6 +27,7 @@
 #include <linux/rcupdate.h>
 #include <linux/mutex.h>
 #include <linux/ftrace.h>
+#include <linux/refcount.h>
 #include <asm/kprobes.h>
 
 #ifdef CONFIG_KPROBES
@@ -144,6 +145,11 @@ static inline int kprobe_ftrace(struct kprobe *p)
  * ignored, due to maxactive being too low.
  *
  */
+struct kretprobe_holder {
+	struct kretprobe	*rp;
+	refcount_t		ref;
+};
+
 struct kretprobe {
 	struct kprobe kp;
 	kretprobe_handler_t handler;
@@ -152,6 +158,7 @@ struct kretprobe {
 	int nmissed;
 	size_t data_size;
 	struct hlist_head free_instances;
+	struct kretprobe_holder *rph;
 	raw_spinlock_t lock;
 };
 
@@ -161,9 +168,8 @@ struct kretprobe_instance {
 		struct hlist_node hlist;
 		struct rcu_head rcu;
 	};
-	struct kretprobe *rp;
+	struct kretprobe_holder *rph;
 	kprobe_opcode_t *ret_addr;
-	struct task_struct *task;
 	void *fp;
 	char data[];
 };
@@ -220,6 +226,13 @@ unsigned long kretprobe_trampoline_handler(struct pt_regs *regs,
 	kprobe_busy_end();
 
 	return ret;
+}
+
+static nokprobe_inline struct kretprobe *get_kretprobe(struct kretprobe_instance *ri)
+{
+	/* rph->rp can be updated by unregister_kretprobe() on other cpu */
+	smp_rmb();
+	return ri->rph->rp;
 }
 
 #else /* CONFIG_KRETPROBES */

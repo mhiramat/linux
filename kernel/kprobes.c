@@ -1214,9 +1214,19 @@ void kprobes_inc_nmissed_count(struct kprobe *p)
 }
 NOKPROBE_SYMBOL(kprobes_inc_nmissed_count);
 
+static void free_rp_inst_rcu(struct rcu_head *head)
+{
+	struct kretprobe_instance *ri = container_of(head, struct kretprobe_instance, rcu);
+
+	if (refcount_dec_and_test(&ri->rph->ref))
+		kfree(ri->rph);
+	kfree(ri);
+}
+NOKPROBE_SYMBOL(free_rp_inst_rcu);
+
 static void recycle_rp_inst(struct kretprobe_instance *ri)
 {
-	struct kretprobe *rp = ri->rp;
+	struct kretprobe *rp = get_kretprobe(ri);
 
 	INIT_HLIST_NODE(&ri->hlist);
 	if (likely(rp)) {
@@ -1224,7 +1234,7 @@ static void recycle_rp_inst(struct kretprobe_instance *ri)
 		hlist_add_head(&ri->hlist, &rp->free_instances);
 		raw_spin_unlock(&rp->lock);
 	} else
-		kfree_rcu(ri, rcu);
+		call_rcu(&ri->rcu, free_rp_inst_rcu);
 }
 NOKPROBE_SYMBOL(recycle_rp_inst);
 
@@ -1283,82 +1293,19 @@ static inline void free_rp_inst(struct kretprobe *rp)
 {
 	struct kretprobe_instance *ri;
 	struct hlist_node *next;
+	int count = 0;
 
 	hlist_for_each_entry_safe(ri, next, &rp->free_instances, hlist) {
 		hlist_del(&ri->hlist);
 		kfree(ri);
-	}
-}
-
-/* XXX all of this only exists because we have rp specific ri's */
-
-static bool __invalidate_rp_inst(struct task_struct *t, void *rp)
-{
-	struct llist_node *node = t->kretprobe_instances.first;
-	struct kretprobe_instance *ri;
-
-	while (node) {
-		ri = container_of(node, struct kretprobe_instance, llist);
-		node = node->next;
-
-		if (ri->rp == rp)
-			ri->rp = NULL;
+		count++;
 	}
 
-	return true;
-}
-
-struct invl_rp_ipi {
-	struct task_struct *task;
-	void *rp;
-	bool done;
-};
-
-static void __invalidate_rp_ipi(void *arg)
-{
-	struct invl_rp_ipi *iri = arg;
-
-	if (iri->task == current)
-		iri->done = __invalidate_rp_inst(iri->task, iri->rp);
-}
-
-static void invalidate_rp_inst(struct task_struct *t, struct kretprobe *rp)
-{
-	struct invl_rp_ipi iri = {
-		.task = t,
-		.rp = rp,
-		.done = false
-	};
-
-	for (;;) {
-		if (try_invoke_on_locked_down_task(t, __invalidate_rp_inst, rp))
-			return;
-
-		smp_call_function_single(task_cpu(t), __invalidate_rp_ipi, &iri, 1);
-		if (iri.done)
-			return;
+	if (refcount_sub_and_test(count, &rp->rph->ref)) {
+		kfree(rp->rph);
+		rp->rph = NULL;
 	}
 }
-
-static void cleanup_rp_inst(struct kretprobe *rp)
-{
-	struct task_struct *p, *t;
-
-	/* To avoid recursive kretprobe by NMI, set kprobe busy here */
-	kprobe_busy_begin();
-	rcu_read_lock();
-	for_each_process_thread(p, t) {
-		if (!t->kretprobe_instances.first)
-			continue;
-
-		invalidate_rp_inst(t, rp);
-	}
-	rcu_read_unlock();
-	kprobe_busy_end();
-
-	free_rp_inst(rp);
-}
-NOKPROBE_SYMBOL(cleanup_rp_inst);
 
 /* Add the new probe to ap->list */
 static int add_new_kprobe(struct kprobe *ap, struct kprobe *p)
@@ -1922,6 +1869,7 @@ unsigned long __kretprobe_trampoline_handler(struct pt_regs *regs,
 	kprobe_opcode_t *correct_ret_addr = NULL;
 	struct kretprobe_instance *ri = NULL;
 	struct llist_node *first, *node;
+	struct kretprobe *rp;
 
 	first = node = current->kretprobe_instances.first;
 	while (node) {
@@ -1951,12 +1899,13 @@ unsigned long __kretprobe_trampoline_handler(struct pt_regs *regs,
 	/* Run them..  */
 	while (first) {
 		ri = container_of(first, struct kretprobe_instance, llist);
+		rp = get_kretprobe(ri);
 		node = first->next;
 
-		if (ri->rp && ri->rp->handler) {
-			__this_cpu_write(current_kprobe, &ri->rp->kp);
+		if (rp && rp->handler) {
+			__this_cpu_write(current_kprobe, &rp->kp);
 			ri->ret_addr = correct_ret_addr;
-			ri->rp->handler(ri, regs);
+			rp->handler(ri, regs);
 			__this_cpu_write(current_kprobe, &kprobe_busy);
 		}
 
@@ -1986,9 +1935,6 @@ static int pre_handler_kretprobe(struct kprobe *p, struct pt_regs *regs)
 				struct kretprobe_instance, hlist);
 		hlist_del(&ri->hlist);
 		raw_spin_unlock_irqrestore(&rp->lock, flags);
-
-		ri->rp = rp;
-		ri->task = current;
 
 		if (rp->entry_handler && rp->entry_handler(ri, regs)) {
 			raw_spin_lock_irqsave(&rp->lock, flags);
@@ -2063,16 +2009,21 @@ int register_kretprobe(struct kretprobe *rp)
 	}
 	raw_spin_lock_init(&rp->lock);
 	INIT_HLIST_HEAD(&rp->free_instances);
+	rp->rph = kzalloc(sizeof(struct kretprobe_holder), GFP_KERNEL);
+	rp->rph->rp = rp;
 	for (i = 0; i < rp->maxactive; i++) {
-		inst = kmalloc(sizeof(struct kretprobe_instance) +
+		inst = kzalloc(sizeof(struct kretprobe_instance) +
 			       rp->data_size, GFP_KERNEL);
 		if (inst == NULL) {
+			refcount_set(&rp->rph->ref, i);
 			free_rp_inst(rp);
 			return -ENOMEM;
 		}
+		inst->rph = rp->rph;
 		INIT_HLIST_NODE(&inst->hlist);
 		hlist_add_head(&inst->hlist, &rp->free_instances);
 	}
+	refcount_set(&rp->rph->ref, i);
 
 	rp->nmissed = 0;
 	/* Establish function entry probe point */
@@ -2114,16 +2065,20 @@ void unregister_kretprobes(struct kretprobe **rps, int num)
 	if (num <= 0)
 		return;
 	mutex_lock(&kprobe_mutex);
-	for (i = 0; i < num; i++)
+	for (i = 0; i < num; i++) {
 		if (__unregister_kprobe_top(&rps[i]->kp) < 0)
 			rps[i]->kp.addr = NULL;
+		rps[i]->rph->rp = NULL;
+	}
+	/* Ensure the rph->rp updated after this */
+	smp_wmb();
 	mutex_unlock(&kprobe_mutex);
 
 	synchronize_rcu();
 	for (i = 0; i < num; i++) {
 		if (rps[i]->kp.addr) {
 			__unregister_kprobe_bottom(&rps[i]->kp);
-			cleanup_rp_inst(rps[i]);
+			free_rp_inst(rps[i]);
 		}
 	}
 }
