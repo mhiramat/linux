@@ -412,17 +412,49 @@ void __naked __kprobes kretprobe_trampoline(void)
 		: : : "memory");
 }
 
+unsigned long __kretprobe_find_ret_addr(struct task_struct *tsk,
+					struct llist_node **cur);
+
+unsigned long kretprobe_find_ret_addr(struct task_struct *tsk,
+				void *fp, struct llist_node **cur)
+{
+	struct kretprobe_instance *ri;
+	unsigned long ret;
+
+	do {
+		ret = __kretprobe_find_ret_addr(tsk, cur);
+		if (!ret)
+			return ret;
+		ri = container_of(*cur, struct kretprobe_instance, llist);
+		/*
+		 * Since arm stores the stack pointer of the entry of target
+		 * function (callee) to ri->fp, the given real @fp must be
+		 * smaller than ri->fp, but bigger than the previous ri->fp.
+		 *
+		 * callee sp (prev ri->fp)
+		 * fp (and *saved_lr)
+		 * caller sp (ri->fp)
+		 */
+	} while (ri->fp <= fp);
+
+	return ret;
+}
+
 /* Called from kretprobe_trampoline */
 static __used __kprobes void *trampoline_handler(struct pt_regs *regs)
 {
-	return (void *)kretprobe_trampoline_handler(regs, (void *)regs->ARM_fp);
+	return (void *)kretprobe_trampoline_handler(regs, (void *)regs->ARM_sp);
 }
 
 void __kprobes arch_prepare_kretprobe(struct kretprobe_instance *ri,
 				      struct pt_regs *regs)
 {
 	ri->ret_addr = (kprobe_opcode_t *)regs->ARM_lr;
-	ri->fp = (void *)regs->ARM_fp;
+	/*
+	 * Since the ARM_fp is the frame pointer to the previous frame,
+	 * record sp instead of fp of this function.
+	 */
+	ri->fp = (void *)regs->ARM_sp;
 
 	/* Replace the return addr with trampoline addr. */
 	regs->ARM_lr = (unsigned long)&kretprobe_trampoline;

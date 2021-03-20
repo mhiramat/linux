@@ -3,6 +3,7 @@
 #define __ASM_STACKTRACE_H
 
 #include <asm/ptrace.h>
+#include <linux/llist.h>
 
 struct stackframe {
 	/*
@@ -13,6 +14,8 @@ struct stackframe {
 	unsigned long sp;
 	unsigned long lr;
 	unsigned long pc;
+	struct llist_node *kr_cur;
+	struct task_struct *tsk;
 };
 
 static __always_inline
@@ -22,6 +25,8 @@ void arm_get_current_stackframe(struct pt_regs *regs, struct stackframe *frame)
 		frame->sp = regs->ARM_sp;
 		frame->lr = regs->ARM_lr;
 		frame->pc = regs->ARM_pc;
+		frame->kr_cur = NULL;
+		frame->tsk = current;
 }
 
 extern int unwind_frame(struct stackframe *frame);

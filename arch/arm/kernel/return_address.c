@@ -42,6 +42,8 @@ void *return_address(unsigned int level)
 	frame.sp = current_stack_pointer;
 	frame.lr = (unsigned long)__builtin_return_address(0);
 	frame.pc = (unsigned long)return_address;
+	frame.tsk = current;
+	frame.kr_cur = NULL;
 
 	walk_stackframe(&frame, save_return_addr, &data);
 
