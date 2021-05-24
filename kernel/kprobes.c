@@ -1859,8 +1859,8 @@ static struct notifier_block kprobe_exceptions_nb = {
 #ifdef CONFIG_KRETPROBES
 
 /* This assumes the tsk is current or the task which is not running. */
-static unsigned long __kretprobe_find_ret_addr(struct task_struct *tsk,
-					       struct llist_node **cur)
+unsigned long __kretprobe_find_ret_addr(struct task_struct *tsk,
+					struct llist_node **cur)
 {
 	struct kretprobe_instance *ri = NULL;
 	struct llist_node *node = *cur;
@@ -1882,8 +1882,8 @@ static unsigned long __kretprobe_find_ret_addr(struct task_struct *tsk,
 }
 NOKPROBE_SYMBOL(__kretprobe_find_ret_addr);
 
-unsigned long kretprobe_find_ret_addr(struct task_struct *tsk, void *fp,
-				      struct llist_node **cur)
+unsigned long __weak kretprobe_find_ret_addr(struct task_struct *tsk,
+				void *fp, struct llist_node **cur)
 {
 	struct kretprobe_instance *ri = NULL;
 	unsigned long ret;

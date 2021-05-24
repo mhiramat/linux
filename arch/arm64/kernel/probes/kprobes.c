@@ -411,6 +411,34 @@ int __init arch_populate_kprobe_blacklist(void)
 	return ret;
 }
 
+unsigned long __kretprobe_find_ret_addr(struct task_struct *tsk,
+					struct llist_node **cur);
+
+unsigned long kretprobe_find_ret_addr(struct task_struct *tsk,
+				void *fp, struct llist_node **cur)
+{
+	struct kretprobe_instance *ri;
+	unsigned long ret;
+
+	do {
+		ret = __kretprobe_find_ret_addr(tsk, cur);
+		if (!ret)
+			return ret;
+		ri = container_of(*cur, struct kretprobe_instance, llist);
+		/*
+		 * Since arm64 stores the stack pointer of the entry of target
+		 * function (callee) to ri->fp, the given real @fp must be
+		 * smaller than ri->fp, but bigger than the previous ri->fp.
+		 *
+		 * callee sp (prev ri->fp)
+		 * fp (and *saved_lr)
+		 * caller sp (ri->fp)
+		 */
+	} while (ri->fp <= fp);
+
+	return ret;
+}
+
 void __kprobes __used *trampoline_probe_handler(struct pt_regs *regs)
 {
 	return (void *)kretprobe_trampoline_handler(regs, (void *)kernel_stack_pointer(regs));

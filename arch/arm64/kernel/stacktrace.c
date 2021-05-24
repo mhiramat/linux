@@ -125,6 +125,8 @@ int notrace unwind_frame(struct task_struct *tsk, struct stackframe *frame)
 		frame->pc = ret_stack->ret;
 	}
 #endif /* CONFIG_FUNCTION_GRAPH_TRACER */
+	if (is_kretprobe_trampoline(frame->pc))
+		frame->pc = kretprobe_find_ret_addr(tsk, (void *)fp, &frame->kr_cur);
 
 	frame->pc = ptrauth_strip_insn_pac(frame->pc);
 
@@ -226,6 +228,7 @@ noinline void arch_stack_walk(stack_trace_consume_fn consume_entry,
 {
 	struct stackframe frame;
 
+	memset(&frame, 0, sizeof(frame));
 	if (regs)
 		start_backtrace(&frame, regs->regs[29], regs->pc);
 	else if (task == current)
