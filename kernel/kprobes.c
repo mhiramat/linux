@@ -1899,6 +1899,12 @@ unsigned long kretprobe_find_ret_addr(struct task_struct *tsk, void *fp,
 }
 NOKPROBE_SYMBOL(kretprobe_find_ret_addr);
 
+void __weak arch_kretprobe_fixup_return(struct pt_regs *regs,
+					unsigned long correct_ret_addr)
+{
+	/* Do nothing by default. */
+}
+
 unsigned long __kretprobe_trampoline_handler(struct pt_regs *regs,
 					     void *frame_pointer)
 {
@@ -1938,6 +1944,8 @@ unsigned long __kretprobe_trampoline_handler(struct pt_regs *regs,
 
 		first = first->next;
 	}
+
+	arch_kretprobe_fixup_return(regs, (unsigned long)correct_ret_addr);
 
 	/* Unlink all nodes for this frame. */
 	first = current->kretprobe_instances.first;
