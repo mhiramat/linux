@@ -252,47 +252,163 @@ unsigned long recover_probed_instruction(kprobe_opcode_t *buf, unsigned long add
 	return __recover_probed_insn(buf, addr);
 }
 
+/* Code block queue */
+struct cbqueue {
+	int size;
+	int next;
+	unsigned long *addr;
+};
+#define INIT_CBQ_SIZE	32
+#define CBQ_ADDR_MASK	((-1UL) >> 1)
+#define CBQ_UNCHK_BIT	(~CBQ_ADDR_MASK)
+
+static struct cbqueue *cbq_alloc(int size)
+{
+	struct cbqueue *q;
+
+	q = kzalloc(sizeof(*q), GFP_KERNEL);
+	if (!q)
+		return NULL;
+	q->size = size;
+	q->addr = kcalloc(size, sizeof(unsigned long), GFP_KERNEL);
+	if (!q->addr) {
+		kfree(q);
+		return NULL;
+	}
+	return q;
+}
+
+static void cbq_free(struct cbqueue *q)
+{
+	kfree(q->addr);
+	kfree(q);
+}
+
+static int cbq_expand(struct cbqueue *q, int newsize)
+{
+	if (q->size > newsize)
+		return -ENOSPC;
+
+	q->addr = krealloc_array(q->addr,
+			newsize, sizeof(unsigned long), GFP_KERNEL);
+	if (!q->addr)
+		return -ENOMEM;
+	q->size = newsize;
+	return 0;
+}
+
+/* Add a new code block address */
+static int cbq_push(struct cbqueue *q, unsigned long addr)
+{
+	int i;
+
+	/* Check the addr exists */
+	for (i = 0; i < q->next; i++)
+		if ((CBQ_ADDR_MASK & (q->addr[i] ^ addr)) == 0)
+			return 0;
+
+	if (q->next == q->size &&
+	    cbq_expand(q, q->size * 2) < 0)
+		return -ENOMEM;
+
+	/* The available bit is the top bit, which must be set in kernel. */
+	WARN_ON_ONCE(!(CBQ_UNCHK_BIT & addr));
+	q->addr[q->next++] = addr;
+	return 0;
+}
+
+/* Return the first unchecked code block address */
+static unsigned long cbq_pop(struct cbqueue *q)
+{
+	unsigned long addr = 0;
+	int i;
+
+	for (i = 0; i < q->next; i++) {
+		if (CBQ_UNCHK_BIT & q->addr[i]) {
+			addr = q->addr[i];
+			q->addr[i] &= CBQ_ADDR_MASK;
+			break;
+		}
+	}
+
+	return addr;
+}
+
+/* Mark the address is checked, and return true if it is already checked. */
+static bool cbq_check(struct cbqueue *q, unsigned long addr)
+{
+	int i;
+
+	for (i = 0; i < q->next; i++) {
+		if ((CBQ_ADDR_MASK & (q->addr[i] ^ addr)) == 0) {
+			if (!(CBQ_UNCHK_BIT & q->addr[i]))
+				return true;
+			q->addr[i] &= CBQ_ADDR_MASK;
+			break;
+		}
+	}
+	return false;
+}
+
+int every_insn_in_func(unsigned long faddr,
+		       int (*callback)(struct insn *, void *),
+		       void *data)
+{
+	unsigned long start, entry, end, dest, offset = 0, size = 0;
+	kprobe_opcode_t buf[MAX_INSN_SIZE];
+	struct cbqueue *q;
+	struct insn insn;
+	int ret;
+
+	if (!kallsyms_lookup_size_offset(faddr, &size, &offset))
+		return 0;
+
+	q = cbq_alloc(INIT_CBQ_SIZE);
+	if (!q)
+		return 0;
+
+	entry = faddr - offset;
+	end = faddr - offset + size;
+	cbq_push(q, entry);
+
+	while ((start = cbq_pop(q))) {
+		for_each_insn(&insn, start, end, buf) {
+			ret = callback(&insn, data);
+			if (ret)
+				goto found;
+
+			dest = insn_get_branch_addr(&insn);
+			if (entry < dest && dest < end)
+				cbq_push(q, dest);
+
+			if (cbq_check(q, (unsigned long)insn.kaddr))
+				break;
+
+			/*
+			 * Hit an INT3, which can not be decoded because it
+			 * might be installed by other debug features or it
+			 * just for trapping speculative execution.
+			 * Anyway, let's decode other unchecked code blocks.
+			 */
+			if (insn.opcode.bytes[0] == INT3_INSN_OPCODE)
+				break;
+		}
+	}
+	ret = 0;
+found:
+	cbq_free(q);
+	return ret;
+}
+
+static int insn_boundary_cb(struct insn *insn, void *paddr)
+{
+	return insn->kaddr == paddr;
+}
+
 /* Check if paddr is at an instruction boundary */
 static int can_probe(unsigned long paddr)
 {
-	unsigned long addr, __addr, offset = 0;
-	struct insn insn;
-	kprobe_opcode_t buf[MAX_INSN_SIZE];
-
-	if (!kallsyms_lookup_size_offset(paddr, NULL, &offset))
-		return 0;
-
-	/* Decode instructions */
-	addr = paddr - offset;
-	while (addr < paddr) {
-		int ret;
-
-		/*
-		 * Check if the instruction has been modified by another
-		 * kprobe, in which case we replace the breakpoint by the
-		 * original instruction in our buffer.
-		 * Also, jump optimization will change the breakpoint to
-		 * relative-jump. Since the relative-jump itself is
-		 * normally used, we just go through if there is no kprobe.
-		 */
-		__addr = recover_probed_instruction(buf, addr);
-		if (!__addr)
-			return 0;
-
-		ret = insn_decode_kernel(&insn, (void *)__addr);
-		if (ret < 0)
-			return 0;
-
-		/*
-		 * Another debugging subsystem might insert this breakpoint.
-		 * In that case, we can't recover it.
-		 */
-		if (insn.opcode.bytes[0] == INT3_INSN_OPCODE)
-			return 0;
-		addr += insn.length;
-	}
-
-	return (addr == paddr);
+	return every_insn_in_func(paddr, insn_boundary_cb, (void *)paddr);
 }
 
 /* If x86 supports IBT (ENDBR) it must be skipped. */

@@ -235,28 +235,9 @@ static int __insn_is_indirect_jump(struct insn *insn)
 /* Check whether insn jumps into specified address range */
 static int insn_jump_into_range(struct insn *insn, unsigned long start, int len)
 {
-	unsigned long target = 0;
+	unsigned long target = insn_get_branch_addr(insn);
 
-	switch (insn->opcode.bytes[0]) {
-	case 0xe0:	/* loopne */
-	case 0xe1:	/* loope */
-	case 0xe2:	/* loop */
-	case 0xe3:	/* jcxz */
-	case 0xe9:	/* near relative jump */
-	case 0xeb:	/* short relative jump */
-		break;
-	case 0x0f:
-		if ((insn->opcode.bytes[1] & 0xf0) == 0x80) /* jcc near */
-			break;
-		return 0;
-	default:
-		if ((insn->opcode.bytes[0] & 0xf0) == 0x70) /* jcc short */
-			break;
-		return 0;
-	}
-	target = (unsigned long)insn->next_byte + insn->immediate.value;
-
-	return (start <= target && target <= start + len);
+	return target ? (start <= target && target <= start + len) : 0;
 }
 
 static int insn_is_indirect_jump(struct insn *insn)

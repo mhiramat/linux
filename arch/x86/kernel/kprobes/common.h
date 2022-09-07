@@ -92,6 +92,64 @@ extern int __copy_instruction(u8 *dest, u8 *src, u8 *real, struct insn *insn);
 extern void synthesize_reljump(void *dest, void *from, void *to);
 extern void synthesize_relcall(void *dest, void *from, void *to);
 
+/* Return the jump target address or 0 */
+static inline unsigned long insn_get_branch_addr(struct insn *insn)
+{
+	switch (insn->opcode.bytes[0]) {
+	case 0xe0:	/* loopne */
+	case 0xe1:	/* loope */
+	case 0xe2:	/* loop */
+	case 0xe3:	/* Jcxz */
+	case 0xe9:	/* JMP.d32 */
+	case 0xeb:	/* JMP.d8 */
+		break;
+	case 0x0f:
+		if ((insn->opcode.bytes[1] & 0xf0) == 0x80) /* Jcc.d32 */
+			break;
+		return 0;
+	case 0x70 ... 0x7f: /* Jcc.d8 */
+		break;
+
+	default:
+		return 0;
+	}
+	return (unsigned long)insn->next_byte + insn->immediate.value;
+}
+
+static inline void __decode_insn(struct insn *insn, kprobe_opcode_t *buf,
+				 unsigned long addr)
+{
+	unsigned long recovered_insn;
+
+	/*
+	 * Check if the instruction has been modified by another
+	 * kprobe, in which case we replace the breakpoint by the
+	 * original instruction in our buffer.
+	 * Also, jump optimization will change the breakpoint to
+	 * relative-jump. Since the relative-jump itself is
+	 * normally used, we just go through if there is no kprobe.
+	 */
+	recovered_insn = recover_probed_instruction(buf, addr);
+	if (!recovered_insn ||
+	    insn_decode_kernel(insn, (void *)recovered_insn) < 0) {
+		insn->kaddr = NULL;
+	} else {
+		/* Recover address */
+		insn->kaddr = (void *)addr;
+		insn->next_byte = (void *)(addr + insn->length);
+	}
+}
+
+/* Iterate instructions in [saddr, eaddr), insn->next_byte is loop cursor. */
+#define for_each_insn(insn, saddr, eaddr, buf)				\
+	for (__decode_insn(insn, buf, saddr);				\
+	     (insn)->kaddr && (unsigned long)(insn)->next_byte < eaddr;	\
+	     __decode_insn(insn, buf, (unsigned long)(insn)->next_byte))
+
+int every_insn_in_func(unsigned long faddr,
+		       int (*callback)(struct insn *, void *),
+		       void *data);
+
 #ifdef	CONFIG_OPTPROBES
 extern int setup_detour_execution(struct kprobe *p, struct pt_regs *regs, int reenter);
 extern unsigned long __recover_optprobed_insn(kprobe_opcode_t *buf, unsigned long addr);
