@@ -260,25 +260,12 @@ static int insn_is_indirect_jump(struct insn *insn)
 	return ret;
 }
 
-static bool is_padding_int3(unsigned long addr, unsigned long eaddr)
-{
-	unsigned char ops;
-
-	for (; addr < eaddr; addr++) {
-		if (get_kernel_nofault(ops, (void *)addr) < 0 ||
-		    ops != INT3_INSN_OPCODE)
-			return false;
-	}
-
-	return true;
-}
-
 /* Decode whole function to ensure any instructions don't jump into target */
 static int can_optimize(unsigned long paddr)
 {
-	unsigned long addr, size = 0, offset = 0;
-	struct insn insn;
 	kprobe_opcode_t buf[MAX_INSN_SIZE];
+	unsigned long size = 0, offset = 0;
+	struct insn insn;
 
 	/* Lookup symbol including addr */
 	if (!kallsyms_lookup_size_offset(paddr, &size, &offset))
@@ -296,11 +283,9 @@ static int can_optimize(unsigned long paddr)
 	if (size - offset < JMP32_INSN_SIZE)
 		return 0;
 
-	/* Decode instructions */
-	addr = paddr - offset;
-	while (addr < paddr - offset + size) { /* Decode until function end */
-		unsigned long recovered_insn;
-		int ret;
+	/* Decode all instructions in the function */
+	for_each_insn(&insn, paddr - offset, paddr - offset + size, buf) {
+		unsigned long addr = (unsigned long)insn.kaddr;
 
 		if (search_exception_tables(addr))
 			/*
@@ -308,31 +293,42 @@ static int can_optimize(unsigned long paddr)
 			 * we can't optimize kprobe in this function.
 			 */
 			return 0;
-		recovered_insn = recover_probed_instruction(buf, addr);
-		if (!recovered_insn)
+
+		if (insn.opcode.bytes[0] == INT3_INSN_OPCODE) {
+			addr = skip_padding_int3(addr);
+			if (!addr)
+				return 0;
+			/*
+			 * If addr becomes the next function entry, this is
+			 * the INT3 padding between functions.
+			 */
+			if (addr - 1 == paddr - offset + size)
+				return 1;
+
+			/*
+			 * This can be padding INT3 for CONFIG_RETHUNK or
+			 * CONFIG_SLS. If a branch jumps to the address next
+			 * to the INT3 sequence, this is just for padding,
+			 * then we can continue decoding.
+			 */
+			for_each_insn(&insn, paddr - offset, addr, buf) {
+				if (insn_get_branch_addr(&insn) == addr)
+					goto found;
+			}
+
+			/* This INT3 can not be decoded safely. */
 			return 0;
+found:
+			/* Set loop cursor */
+			insn.next_byte = (void *)addr;
+			continue;
+		}
 
-		ret = insn_decode_kernel(&insn, (void *)recovered_insn);
-		if (ret < 0)
-			return 0;
-
-		/*
-		 * In the case of detecting unknown breakpoint, this could be
-		 * a padding INT3 between functions. Let's check that all the
-		 * rest of the bytes are also INT3.
-		 */
-		if (insn.opcode.bytes[0] == INT3_INSN_OPCODE)
-			return is_padding_int3(addr, paddr - offset + size) ? 1 : 0;
-
-		/* Recover address */
-		insn.kaddr = (void *)addr;
-		insn.next_byte = (void *)(addr + insn.length);
 		/* Check any instructions don't jump into target */
 		if (insn_is_indirect_jump(&insn) ||
 		    insn_jump_into_range(&insn, paddr + INT3_INSN_SIZE,
 					 DISP32_SIZE))
 			return 0;
-		addr += insn.length;
 	}
 
 	return 1;
