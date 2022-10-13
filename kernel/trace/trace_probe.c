@@ -76,9 +76,9 @@ const char PRINT_TYPE_FMT_NAME(string)[] = "\\\"%s\\\"";
 /* Fetch type information table */
 static const struct fetch_type probe_fetch_types[] = {
 	/* Special types */
-	__ASSIGN_FETCH_TYPE("string", string, string, sizeof(u32), 1,
+	__ASSIGN_FETCH_TYPE("string", string, string, sizeof(u32), 1, 1,
 			    "__data_loc char[]"),
-	__ASSIGN_FETCH_TYPE("ustring", string, string, sizeof(u32), 1,
+	__ASSIGN_FETCH_TYPE("ustring", string, string, sizeof(u32), 1, 1,
 			    "__data_loc char[]"),
 	/* Basic types */
 	ASSIGN_FETCH_TYPE(u8,  u8,  0),
@@ -662,8 +662,7 @@ static int traceprobe_parse_probe_arg_body(const char *argv, ssize_t *size,
 
 	ret = -EINVAL;
 	/* Store operation */
-	if (!strcmp(parg->type->name, "string") ||
-	    !strcmp(parg->type->name, "ustring")) {
+	if (parg->type->is_string) {
 		if (code->op != FETCH_OP_DEREF && code->op != FETCH_OP_UDEREF &&
 		    code->op != FETCH_OP_IMM && code->op != FETCH_OP_COMM &&
 		    code->op != FETCH_OP_DATA && code->op != FETCH_OP_TP_ARG) {
@@ -919,8 +918,7 @@ static int __set_print_fmt(struct trace_probe *tp, char *buf, int len,
 	for (i = 0; i < tp->nr_args; i++) {
 		parg = tp->args + i;
 		if (parg->count) {
-			if ((strcmp(parg->type->name, "string") == 0) ||
-			    (strcmp(parg->type->name, "ustring") == 0))
+			if (parg->type->is_string)
 				fmt = ", __get_str(%s[%d])";
 			else
 				fmt = ", REC->%s[%d]";
@@ -928,8 +926,7 @@ static int __set_print_fmt(struct trace_probe *tp, char *buf, int len,
 				pos += snprintf(buf + pos, LEN_OR_ZERO,
 						fmt, parg->name, j);
 		} else {
-			if ((strcmp(parg->type->name, "string") == 0) ||
-			    (strcmp(parg->type->name, "ustring") == 0))
+			if (parg->type->is_string)
 				fmt = ", __get_str(%s)";
 			else
 				fmt = ", REC->%s";
