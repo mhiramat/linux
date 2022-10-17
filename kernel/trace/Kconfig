@@ -255,7 +255,7 @@ config FPROBE
 	depends on DYNAMIC_FTRACE_WITH_REGS
 	depends on HAVE_RETHOOK
 	select RETHOOK
-	default n
+	default y
 	help
 	  This option enables kernel function probe (fprobe) based on ftrace.
 	  The fprobe is similar to kprobes, but probes only for kernel function
