@@ -18,6 +18,7 @@
 #include <linux/nmi.h>
 #include <linux/sysfs.h>
 #include <linux/kasan.h>
+#include <linux/rethook.h>
 
 #include <asm/cpu_entry_area.h>
 #include <asm/stacktrace.h>
@@ -191,6 +192,8 @@ static void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
 	unsigned long visit_mask = 0;
 	int graph_idx = 0;
 	bool partial = false;
+
+	rethook_dump_rra(log_lvl);
 
 	printk("%sCall Trace:\n", log_lvl);
 

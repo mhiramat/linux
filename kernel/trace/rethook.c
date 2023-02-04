@@ -5,12 +5,47 @@
 #include <linux/bug.h>
 #include <linux/kallsyms.h>
 #include <linux/kprobes.h>
+#include <linux/percpu.h>
 #include <linux/preempt.h>
 #include <linux/rethook.h>
 #include <linux/slab.h>
 #include <linux/sort.h>
 
 /* Return hook list (shadow stack by list) */
+
+/* Save recently used real return addresses */
+#define NR_RRA 8
+struct recent_return_address {
+	unsigned long retaddr[NR_RRA];
+	int cnt;
+};
+static DEFINE_PER_CPU(struct recent_return_address, rethook_rra);
+
+void rethook_dump_rra(const char *loglvl)
+{
+	struct recent_return_address *rra;
+	int i;
+
+	preempt_disable();
+	rra = this_cpu_ptr(&rethook_rra);
+	printk("%s<Recently used return address from rethook>\n", loglvl);
+	for (i = 0; i < NR_RRA; i++) {
+		printk("%s[%d] %lx\n", loglvl, i, rra->retaddr[(rra->cnt + i) % NR_RRA]);
+	}
+	preempt_enable_no_resched();
+}
+
+static void rethook_add_rra(unsigned long retaddr)
+{
+	struct recent_return_address *rra;
+	int cnt;
+
+	preempt_disable();
+	rra = this_cpu_ptr(&rethook_rra);
+	cnt = (rra->cnt++) % NR_RRA;
+	rra->retaddr[cnt] = retaddr;
+	preempt_enable_no_resched();
+}
 
 /*
  * This function is called from delayed_put_task_struct() when a task is
@@ -323,6 +358,7 @@ unsigned long rethook_trampoline_handler(struct pt_regs *regs,
 	}
 	preempt_enable();
 
+	rethook_add_rra(correct_ret_addr);
 	return correct_ret_addr;
 }
 NOKPROBE_SYMBOL(rethook_trampoline_handler);

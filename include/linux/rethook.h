@@ -90,10 +90,14 @@ void arch_rethook_fixup_return(struct pt_regs *regs,
 unsigned long rethook_trampoline_handler(struct pt_regs *regs,
 					 unsigned long frame);
 
+
 #ifdef CONFIG_RETHOOK
 void rethook_flush_task(struct task_struct *tk);
+/* Debug dump for die */
+void rethook_dump_rra(const char *loglvl);
 #else
 #define rethook_flush_task(tsk)	do { } while (0)
+#define rethook_dump_rra(loglvl) do { } while (0)
 #endif
 
 #endif
