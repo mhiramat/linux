@@ -362,7 +362,8 @@ int trace_probe_print_args(struct trace_seq *s, struct probe_arg *args, int nr_a
 #define TPARG_FL_FENTRY BIT(2)
 #define TPARG_FL_TPOINT BIT(3)
 #define TPARG_FL_USER   BIT(4)
-#define TPARG_FL_MASK	GENMASK(4, 0)
+#define TPARG_FL_FPROBE BIT(5)
+#define TPARG_FL_MASK	GENMASK(5, 0)
 
 extern int traceprobe_parse_probe_arg(struct trace_probe *tp, int i,
 				const char *argv, unsigned int flags);
