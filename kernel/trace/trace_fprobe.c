@@ -9,6 +9,7 @@
 #include <linux/module.h>
 #include <linux/rculist.h>
 #include <linux/security.h>
+#include <linux/tracepoint.h>
 #include <linux/uaccess.h>
 
 #include "trace_dynevent.h"
@@ -41,6 +42,7 @@ struct trace_fprobe {
 	struct dyn_event	devent;
 	struct fprobe		fp;
 	const char		*symbol;
+	struct	tracepoint	*tpoint;
 	struct trace_probe	tp;
 };
 
@@ -66,6 +68,11 @@ static struct trace_fprobe *to_trace_fprobe(struct dyn_event *ev)
 static bool trace_fprobe_is_return(struct trace_fprobe *tf)
 {
 	return tf->fp.exit_handler != NULL;
+}
+
+static bool trace_fprobe_is_tracepoint(struct trace_fprobe *tf)
+{
+	return tf->tpoint != NULL;
 }
 
 static const char *trace_fprobe_symbol(struct trace_fprobe *tf)
@@ -689,8 +696,23 @@ static int __register_trace_fprobe(struct trace_fprobe *tf)
 	else
 		tf->fp.flags |= FPROBE_FL_DISABLED;
 
-	/* TODO: handle filter, nofilter or symbol list */
-	return register_fprobe(&tf->fp, tf->symbol, NULL);
+	if (trace_fprobe_is_tracepoint(tf)) {
+		struct tracepoint *tpoint = tf->tpoint;
+		unsigned long ip = (unsigned long)tpoint->probestub;
+		/*
+		 * Here, we do 2 steps to enable fprobe on a tracepoint.
+		 * At first, put __probestub_##TP function on the tracepoint
+		 * and put a fprobe on the stub function.
+		 */
+		ret = tracepoint_probe_register_prio_may_exist(tpoint,
+					tpoint->probestub, NULL, 0);
+		if (ret < 0)
+			return ret;
+		return register_fprobe_ips(&tf->fp, &ip, 1);
+	} else {
+		/* TODO: handle filter, nofilter or symbol list */
+		return register_fprobe(&tf->fp, tf->symbol, NULL);
+	}
 }
 
 /* Internal unregister function - just handle fprobe and flags */
@@ -699,6 +721,9 @@ static void __unregister_trace_fprobe(struct trace_fprobe *tf)
 	if (trace_fprobe_is_registered(tf)) {
 		unregister_fprobe(&tf->fp);
 		memset(&tf->fp, 0, sizeof(tf->fp));
+		if (trace_fprobe_is_tracepoint(tf))
+			tracepoint_probe_unregister(tf->tpoint,
+					tf->tpoint->probestub, NULL);
 	}
 }
 
@@ -762,7 +787,8 @@ static int append_trace_fprobe(struct trace_fprobe *tf, struct trace_fprobe *to)
 {
 	int ret;
 
-	if (trace_fprobe_is_return(tf) != trace_fprobe_is_return(to)) {
+	if (trace_fprobe_is_return(tf) != trace_fprobe_is_return(to) ||
+	    trace_fprobe_is_tracepoint(tf) != trace_fprobe_is_tracepoint(to)) {
 		trace_probe_log_set_index(0);
 		trace_probe_log_err(0, DIFF_PROBE_TYPE);
 		return -EEXIST;
@@ -832,6 +858,14 @@ end:
 	return ret;
 }
 
+static void __find_tracepoint_cb(struct tracepoint *tp, void *priv)
+{
+	struct trace_fprobe *tf = priv;
+
+	if (!tf->tpoint && !strcmp(tf->symbol, tp->name))
+		tf->tpoint = tp;
+}
+
 static int __trace_fprobe_create(int argc, const char *argv[])
 {
 	/*
@@ -840,6 +874,8 @@ static int __trace_fprobe_create(int argc, const char *argv[])
 	 *      f[:[GRP/][EVENT]] [MOD:]KSYM [FETCHARGS]
 	 *  - Add fexit probe:
 	 *      f[N][:[GRP/][EVENT]] [MOD:]KSYM%return [FETCHARGS]
+	 *  - Add tracepoint probe:
+	 *      t[:[GRP/][EVENT]] TRACEPOINT [FETCHARGS]
 	 *
 	 * Fetch args:
 	 *  $retval	: fetch return value
@@ -865,9 +901,13 @@ static int __trace_fprobe_create(int argc, const char *argv[])
 	char buf[MAX_EVENT_NAME_LEN];
 	char gbuf[MAX_EVENT_NAME_LEN];
 	unsigned int flags = TPARG_FL_KERNEL;
+	bool is_tracepoint = false;
 
-	if (argv[0][0] != 'f' || argc < 2)
+	if ((argv[0][0] != 'f' && argv[0][0] != 't') || argc < 2)
 		return -ECANCELED;
+
+	if (argv[0][0] == 't')
+		is_tracepoint = true;
 
 	trace_probe_log_init("trace_fprobe", argc, argv);
 
@@ -902,7 +942,7 @@ static int __trace_fprobe_create(int argc, const char *argv[])
 
 	trace_probe_log_set_index(1);
 
-	/* a symbol specified */
+	/* a symbol(or tracepoint) must be specified */
 	symbol = kstrdup(argv[1], GFP_KERNEL);
 	if (!symbol)
 		return -ENOMEM;
@@ -922,10 +962,17 @@ static int __trace_fprobe_create(int argc, const char *argv[])
 		trace_probe_log_err(1, MAXACT_NO_KPROBE);
 		goto parse_error;
 	}
+	if ((is_return || maxactive) && is_tracepoint) {
+		trace_probe_log_set_index(0);
+		trace_probe_log_err(1, MAXACT_NO_TPROBE);
+		goto parse_error;
+	}
 
 	flags |= TPARG_FL_FENTRY;
 	if (is_return)
 		flags |= TPARG_FL_RETURN;
+	if (is_tracepoint)
+		flags |= TPARG_FL_TPOINT;
 
 	trace_probe_log_set_index(0);
 	if (event) {
@@ -938,20 +985,31 @@ static int __trace_fprobe_create(int argc, const char *argv[])
 	if (!event) {
 		/* Make a new event name */
 		snprintf(buf, MAX_EVENT_NAME_LEN, "%s_%s", symbol,
-			 is_return ? "exit" : "entry");
+			 is_tracepoint ? "event" :
+			 (is_return ? "exit" : "entry"));
 		sanitize_event_name(buf);
 		event = buf;
 	}
 
 	/* setup a probe */
 	tf = alloc_trace_fprobe(group, event, symbol, maxactive,
-			       argc - 2, is_return);
+			        argc - 2, is_return);
 	if (IS_ERR(tf)) {
 		ret = PTR_ERR(tf);
 		/* This must return -ENOMEM, else there is a bug */
 		WARN_ON_ONCE(ret != -ENOMEM);
 		goto out;	/* We know tf is not allocated */
 	}
+
+	if (is_tracepoint) {
+		for_each_kernel_tracepoint(__find_tracepoint_cb, tf);
+		if (!tf->tpoint) {
+			trace_probe_log_set_index(1);
+			trace_probe_log_err(1, NO_TRACEPOINT);
+			goto parse_error;
+		}
+	}
+
 	argc -= 2; argv += 2;
 
 	/* parse arguments */
