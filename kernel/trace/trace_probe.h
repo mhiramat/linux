@@ -23,6 +23,7 @@
 #include <linux/limits.h>
 #include <linux/uaccess.h>
 #include <linux/bitops.h>
+#include <linux/btf.h>
 #include <asm/bitsperlong.h>
 
 #include "trace.h"
@@ -376,6 +377,9 @@ static inline bool tparg_is_function_entry(unsigned int flags)
 
 struct traceprobe_parse_context {
 	struct trace_event_call *event;
+	const struct btf_param *params;
+	s32 nr_params;
+	const char *funcname;
 	unsigned int flags;
 	int offset;
 };
@@ -383,6 +387,12 @@ struct traceprobe_parse_context {
 extern int traceprobe_parse_probe_arg(struct trace_probe *tp, int i,
 				      const char *argv,
 				      struct traceprobe_parse_context *ctx);
+#ifdef CONFIG_BPF_SYSCALL
+int traceprobe_parse_btf_arg(struct trace_probe *tp, int i, struct btf *btf,
+			     const struct btf_param *arg);
+const struct btf_param *traceprobe_find_btf_func_args(struct btf *btf,
+						const char *funcname, s32 *nr);
+#endif
 
 extern int traceprobe_update_arg(struct probe_arg *arg);
 extern void traceprobe_free_probe_arg(struct probe_arg *arg);

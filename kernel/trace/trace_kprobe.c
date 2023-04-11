@@ -700,6 +700,41 @@ static int trace_kprobe_module_callback(struct notifier_block *nb,
 	return NOTIFY_DONE;
 }
 
+#ifdef CONFIG_BPF_SYSCALL
+
+static int trace_kprobe_parse_btf_args(struct trace_kprobe *tk, int i,
+				       const char *arg, unsigned int flags)
+{
+	struct trace_probe *tp = &tk->tp;
+	const struct btf_param *args;
+	s32 nargs;
+	int ret;
+
+	if (!(flags & TPARG_FL_FENTRY))
+		return -EINVAL;
+	if (!tk->symbol)
+		return -EINVAL;
+
+	args = traceprobe_find_btf_func_args(tk->symbol, &nargs);
+	if (IS_ERR(args))
+		return PTR_ERR(args);
+
+	for (i = 0; i < nargs; i++) {
+		ret = traceprobe_parse_btf_arg(tp, i, &args[i]);
+		if (ret < 0)
+			break;
+	}
+
+	return ret;
+}
+#else
+static int trace_kprobe_parse_btf_args(struct trace_kprobe *tk, int i,
+				       const char *arg, unsigned int flags)
+{
+	return -EOPNOTSUPP;
+}
+#endif
+
 static struct notifier_block trace_kprobe_module_nb = {
 	.notifier_call = trace_kprobe_module_callback,
 	.priority = 1	/* Invoked after kprobe module callback */
@@ -721,12 +756,13 @@ static int __trace_kprobe_create(int argc, const char *argv[])
 	 *  $stack	: fetch stack address
 	 *  $stackN	: fetch Nth of stack (N:0-)
 	 *  $comm       : fetch current task comm
+	 *  $$args	: fetch all parameters using BTF
 	 *  @ADDR	: fetch memory at ADDR (ADDR should be in kernel)
 	 *  @SYM[+|-offs] : fetch memory at SYM +|- offs (SYM is a data symbol)
 	 *  %REG	: fetch register REG
 	 * Dereferencing memory fetch:
 	 *  +|-offs(ARG) : fetch memory at ARG +|- offs address.
-	 * Alias name of args:
+	 * Alias name of args (except for $$args) :
 	 *  NAME=FETCHARG : set NAME as alias of FETCHARG.
 	 * Type of args:
 	 *  FETCHARG:TYPE : use TYPE instead of unsigned long.
@@ -742,7 +778,7 @@ static int __trace_kprobe_create(int argc, const char *argv[])
 	void *addr = NULL;
 	char buf[MAX_EVENT_NAME_LEN];
 	char gbuf[MAX_EVENT_NAME_LEN];
-	unsigned int flags = TPARG_FL_KERNEL;
+	struct traceprobe_parse_context ctx = { .flags = TPARG_FL_KERNEL };
 
 	switch (argv[0][0]) {
 	case 'r':
@@ -823,10 +859,10 @@ static int __trace_kprobe_create(int argc, const char *argv[])
 			goto parse_error;
 		}
 		if (is_return)
-			flags |= TPARG_FL_RETURN;
+			ctx.flags |= TPARG_FL_RETURN;
 		ret = kprobe_on_func_entry(NULL, symbol, offset);
 		if (ret == 0)
-			flags |= TPARG_FL_FENTRY;
+			ctx.flags |= TPARG_FL_FENTRY;
 		/* Defer the ENOENT case until register kprobe */
 		if (ret == -EINVAL && is_return) {
 			trace_probe_log_err(0, BAD_RETPROBE);
@@ -856,20 +892,20 @@ static int __trace_kprobe_create(int argc, const char *argv[])
 
 	/* setup a probe */
 	tk = alloc_trace_kprobe(group, event, addr, symbol, offset, maxactive,
-			       argc - 2, is_return);
+			        ret, is_return);
 	if (IS_ERR(tk)) {
 		ret = PTR_ERR(tk);
 		/* This must return -ENOMEM, else there is a bug */
 		WARN_ON_ONCE(ret != -ENOMEM);
 		goto out;	/* We know tk is not allocated */
 	}
+
 	argc -= 2; argv += 2;
-
 	/* parse arguments */
+	ctx.funcname = symbol;
 	for (i = 0; i < argc && i < MAX_TRACE_ARGS; i++) {
-		struct traceprobe_parse_context ctx = { .flags = flags };
-
 		trace_probe_log_set_index(i + 2);
+		ctx->offset = 0;
 		ret = traceprobe_parse_probe_arg(&tk->tp, i, argv[i], &ctx);
 		if (ret)
 			goto error;	/* This can be -ENOMEM */
