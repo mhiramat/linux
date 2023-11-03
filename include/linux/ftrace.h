@@ -1049,6 +1049,9 @@ struct fgraph_ops {
 	int				idx;
 };
 
+void *fgraph_reserve_data(int size_bytes);
+void *fgraph_retrieve_data(void);
+
 /*
  * Stack of return addresses for functions
  * of a thread.
