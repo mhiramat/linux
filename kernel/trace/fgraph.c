@@ -872,7 +872,7 @@ unsigned long ftrace_graph_ret_addr(struct task_struct *task, int *idx,
 void fgraph_init_ops(struct ftrace_ops *dst_ops,
 		     struct ftrace_ops *src_ops)
 {
-	dst_ops->func = ftrace_stub;
+	dst_ops->func = ftrace_graph_func;
 	dst_ops->flags = FTRACE_OPS_FL_PID | FTRACE_OPS_FL_STUB;
 
 #ifdef FTRACE_GRAPH_TRAMP_ADDR
@@ -1120,7 +1120,7 @@ int register_ftrace_graph(struct fgraph_ops *gops)
 
 	if (!gops->ops.func) {
 		gops->ops.flags |= FTRACE_OPS_FL_STUB;
-		gops->ops.func = ftrace_stub;
+		gops->ops.func = ftrace_graph_func;
 #ifdef FTRACE_GRAPH_TRAMP_ADDR
 		gops->ops.trampoline = FTRACE_GRAPH_TRAMP_ADDR;
 #endif
