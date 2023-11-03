@@ -289,6 +289,7 @@ void *fgraph_reserve_data(int size_bytes)
 
 /**
  * fgraph_retrieve_data - Retrieve stored data from fgraph_reserve_data()
+ * @size_bytes: pointer to retrieved data size.
  *
  * This is to be called by a fgraph_ops retfunc(), to retrieve data that
  * was stored by the fgraph_ops entryfunc() on the function entry.
@@ -300,7 +301,7 @@ void *fgraph_reserve_data(int size_bytes)
  *    matching entryfunc() for the retfunc() this is called from.
  *   Or NULL if there was nothing stored.
  */
-void *fgraph_retrieve_data(void)
+void *fgraph_retrieve_data(int *size_bytes)
 {
 	unsigned long val;
 	int curr_ret_stack = current->curr_ret_stack;
@@ -313,6 +314,8 @@ void *fgraph_retrieve_data(void)
 	val = current->ret_stack[curr_ret_stack - 2];
 	if (__get_type(val) != FGRAPH_TYPE_DATA)
 		return NULL;
+	if (size_bytes)
+		*size_bytes = (__get_data(val) - 1) * sizeof(long);
 
 	return &current->ret_stack[curr_ret_stack -
 				   (__get_data(val) + 1)];

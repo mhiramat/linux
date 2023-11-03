@@ -807,12 +807,20 @@ static __init void store_return(struct ftrace_graph_ret *trace,
 	const char *type = fgraph_store_type_name;
 	long long expect = 0;
 	long long found = -1;
+	int size;
 	char *p;
 
-	p = fgraph_retrieve_data();
+	p = fgraph_retrieve_data(&size);
 	if (!p) {
 		snprintf(fgraph_error_str_buf, sizeof(fgraph_error_str_buf),
 			 "Failed to retrieve %s\n", type);
+		fgraph_error_str = fgraph_error_str_buf;
+		return;
+	}
+	if (fgraph_store_size > size) {
+		snprintf(fgraph_error_str_buf, sizeof(fgraph_error_str_buf),
+			 "Retrieved size %d is smaller than expected %d\n",
+			 size, (int)fgraph_store_size);
 		fgraph_error_str = fgraph_error_str_buf;
 		return;
 	}

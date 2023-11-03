@@ -1050,7 +1050,7 @@ struct fgraph_ops {
 };
 
 void *fgraph_reserve_data(int size_bytes);
-void *fgraph_retrieve_data(void);
+void *fgraph_retrieve_data(int *size_bytes);
 
 /*
  * Stack of return addresses for functions
