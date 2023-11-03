@@ -740,7 +740,8 @@ static unsigned long __ftrace_return_to_handler(struct fgraph_ret_regs *ret_regs
 		case FGRAPH_TYPE_ARRAY:
 			idx = __get_array(val);
 			fgraph_array[idx]->retfunc(&trace, fgraph_array[idx]);
-			fallthrough;
+			curr_ret_stack -= __get_index(val);
+			break;
 		case FGRAPH_TYPE_RESERVED:
 			curr_ret_stack--;
 			break;
