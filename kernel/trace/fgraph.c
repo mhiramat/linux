@@ -714,7 +714,7 @@ static unsigned long __ftrace_return_to_handler(struct fgraph_ret_regs *ret_regs
 
 	ret_stack = ftrace_pop_return_trace(&trace, &ret, frame_pointer);
 
-	if (unlikely(!ret)) {
+	if (unlikely(!ret_stack)) {
 		ftrace_graph_stop();
 		WARN_ON(1);
 		/* Might as well panic. What else to do? */
