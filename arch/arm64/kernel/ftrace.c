@@ -481,7 +481,13 @@ void prepare_ftrace_return(unsigned long self_addr, unsigned long *parent,
 void ftrace_graph_func(unsigned long ip, unsigned long parent_ip,
 		       struct ftrace_ops *op, struct ftrace_regs *fregs)
 {
-	prepare_ftrace_return(ip, &fregs->lr, fregs->fp);
+	if (unlikely(atomic_read(&current->tracing_graph_pause)))
+		return;
+
+	if (!function_graph_enter_regs(fregs->lr, ip, fregs->fp,
+				       (void *)fregs->fp, fregs)) {
+		fregs->lr = (unsigned long)&return_to_handler;
+	}
 }
 #else
 /*
