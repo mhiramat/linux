@@ -95,7 +95,7 @@ enum {
 #define FGRAPH_ARRAY_MASK	((1 << FGRAPH_ARRAY_SIZE) - 1)
 #define FGRAPH_ARRAY_SHIFT	(FGRAPH_TYPE_SHIFT + FGRAPH_TYPE_SIZE)
 
-#define FGRAPH_DATA_SIZE	2
+#define FGRAPH_DATA_SIZE	5
 #define FGRAPH_DATA_MASK	((1 << FGRAPH_DATA_SIZE) - 1)
 #define FGRAPH_DATA_SHIFT	(FGRAPH_TYPE_SHIFT + FGRAPH_TYPE_SIZE)
 
@@ -113,7 +113,7 @@ enum {
 
 #define RET_STACK(t, index) ((struct ftrace_ret_stack *)(&(t)->ret_stack[index]))
 
-#define FGRAPH_MAX_DATA_SIZE (sizeof(long) * 4)
+#define FGRAPH_MAX_DATA_SIZE (sizeof(long) * (1 << FGRAPH_DATA_SIZE))
 
 /*
  * Each fgraph_ops has a reservered unsigned long at the end (top) of the
