@@ -2965,6 +2965,20 @@ static bool event_in_systems(struct trace_event_call *call,
 	return !*p || isspace(*p) || *p == ',';
 }
 
+#ifdef CONFIG_HIST_TRIGGERS
+/*
+ * Wake up waiter on the hist_wq from irq_work because the hist trigger
+ * may happen in any context.
+ */
+static void hist_event_irq_work(struct irq_work *work)
+{
+	struct trace_event_file *event_file;
+
+	event_file = container_of(work, struct trace_event_file, hist_work);
+	wake_up_all(&event_file->hist_wq);
+}
+#endif
+
 static struct trace_event_file *
 trace_create_new_event(struct trace_event_call *call,
 		       struct trace_array *tr)
@@ -2996,6 +3010,11 @@ trace_create_new_event(struct trace_event_call *call,
 	atomic_set(&file->tm_ref, 0);
 	INIT_LIST_HEAD(&file->triggers);
 	list_add(&file->list, &tr->events);
+#ifdef CONFIG_HIST_TRIGGERS
+	init_irq_work(&file->hist_work, hist_event_irq_work);
+	init_waitqueue_head(&file->hist_wq);
+	file->hist_updated = false;
+#endif
 	event_file_get(file);
 
 	return file;

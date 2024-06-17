@@ -5314,6 +5314,11 @@ static void event_hist_trigger(struct event_trigger_data *data,
 
 	if (resolve_var_refs(hist_data, key, var_ref_vals, true))
 		hist_trigger_actions(hist_data, elt, buffer, rec, rbe, key, var_ref_vals);
+
+	if (hist_data->event_file && !hist_data->event_file->hist_updated) {
+		hist_data->event_file->hist_updated = true;
+		irq_work_queue(&hist_data->event_file->hist_work);
+	}
 }
 
 static void hist_trigger_stacktrace_print(struct seq_file *m,
@@ -5611,11 +5616,30 @@ static int hist_show(struct seq_file *m, void *v)
 		if (data->cmd_ops->trigger_type == ETT_EVENT_HIST)
 			hist_trigger_show(m, data, n++);
 	}
+	/* Once we read the histogram, epoll can wait for next update. */
+	event_file->hist_updated = false;
 
  out_unlock:
 	mutex_unlock(&event_mutex);
 
 	return ret;
+}
+
+static __poll_t event_hist_poll(struct file *file, struct poll_table_struct *wait)
+{
+	struct trace_event_file *event_file = event_file_data(file);
+
+	if (!event_file)
+		return 0;
+
+	if (event_file->hist_updated) {
+		event_file->hist_updated = false;
+		return EPOLLIN | EPOLLRDNORM;
+	}
+
+	poll_wait(file, &event_file->hist_wq, wait);
+
+	return 0;
 }
 
 static int event_hist_open(struct inode *inode, struct file *file)
@@ -5636,6 +5660,7 @@ const struct file_operations event_hist_fops = {
 	.read = seq_read,
 	.llseek = seq_lseek,
 	.release = tracing_single_release_file_tr,
+	.poll = event_hist_poll,
 };
 
 #ifdef CONFIG_HIST_TRIGGERS_DEBUG

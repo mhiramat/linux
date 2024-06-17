@@ -663,6 +663,12 @@ struct trace_event_file {
 	struct trace_subsystem_dir	*system;
 	struct list_head		triggers;
 
+#ifdef CONFIG_HIST_TRIGGERS
+	struct irq_work			hist_work;
+	wait_queue_head_t		hist_wq;
+	bool				hist_updated;
+#endif
+
 	/*
 	 * 32 bit flags:
 	 *   bit 0:		enabled
