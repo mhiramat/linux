@@ -1,0 +1,46 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# description: event trigger - test poll wait on histogram
+# requires: set_event events/sched/sched_process_free/trigger events/sched/sched_process_free/hist
+# flags: instance
+
+POLL=${FTRACETEST_ROOT}/poll
+
+if [ ! -x ${POLL} ]; then
+  echo "poll program is not compiled!"
+  exit_unresolved
+fi
+
+EVENT=events/sched/sched_process_free/
+
+echo "hist:key=comm" > ${EVENT}/trigger
+echo 1 > ${EVENT}/enable
+
+# setting timeout
+PID=$$
+SIG_FAIL=37
+trap exit_fail $SIG_FAIL
+sleep 10 && (kill -s ${SIG_FAIL} ${PID} ||:) &
+TOPID=$!
+
+# sleep command will exit after 2 seconds
+sleep 2 &
+BGPID=$!
+${POLL} ${EVENT}/hist
+# stop timeout
+kill -KILL ${TOPID} ||:
+
+cat trace > ${TMPDIR}/trace
+
+if [ -d /proc/${BGPID} ]; then
+  echo "poll exits too soon"
+  kill -KILL ${BGPID} ||:
+  exit_fail
+fi
+
+if ! grep -qw "sleep" ${TMPDIR}/trace; then
+  echo "poll exits before event happens"
+  exit_fail
+fi
+
+exit_pass
