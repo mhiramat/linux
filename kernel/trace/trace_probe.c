@@ -1431,6 +1431,10 @@ static int traceprobe_parse_probe_arg_body(const char *argv, ssize_t *size,
 		goto out;
 	}
 
+	if (ctx->parse_arg) {
+		ret = ctx->parse_arg(arg, size, parg, ctx);
+	}
+
 	type = parse_probe_arg_type(arg, parg, ctx);
 	if (IS_ERR(type)) {
 		ret = PTR_ERR(type);
