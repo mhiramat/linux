@@ -9,6 +9,8 @@
 #include <linux/refcount.h>
 #include <linux/slab.h>
 
+#include <asm/fprobe.h>
+
 struct fprobe;
 typedef int (*fprobe_entry_cb)(struct fprobe *fp, unsigned long entry_ip,
 			       unsigned long ret_ip, struct ftrace_regs *regs,
@@ -149,6 +151,29 @@ static inline void enable_fprobe(struct fprobe *fp)
 #define MAX_FPROBE_DATA_SIZE_WORD	((1L << FPROBE_DATA_SIZE_BITS) - 1)
 #define MAX_FPROBE_DATA_SIZE		(MAX_FPROBE_DATA_SIZE_WORD * sizeof(long))
 
+#if defined(arch_encode_fprobe_header) && defined(arch_decode_fprobe_header)
+
+/* The arch should encode fprobe_header info into one unsigned long */
+#define FPROBE_HEADER_SIZE_IN_LONG	1
+
+static inline bool write_fprobe_header(unsigned long *stack,
+					struct fprobe *fp, unsigned int size_words)
+{
+	unsigned long val = arch_encode_fprobe_header(fp, size_words);
+
+	if (!val)
+		return false;
+
+	*stack = val;
+	return true;
+}
+
+static inline void read_fprobe_header(unsigned long *stack,
+					struct fprobe **fp, unsigned int *size_words)
+{
+	arch_decode_fprobe_header(*stack, fp, size_words);
+}
+#else
 /* Generic fprobe_header, which is safe for 32bit arch */
 struct __fprobe_header {
 	struct fprobe *fp;
@@ -178,5 +203,6 @@ static inline void read_fprobe_header(unsigned long *stack,
 	*fp = fph->fp;
 	*size_words = fph->size_words;
 }
+#endif /* CONFIG_HAVE_ARCH_FPROBE_HEADER */
 
 #endif
