@@ -229,6 +229,25 @@ FTRACE_ENTRY(kernel_stack, stack_entry,
 		 (void *)__entry->caller[6], (void *)__entry->caller[7])
 );
 
+FTRACE_ENTRY(kernel_rel_stack, rel_stack_entry,
+
+	TRACE_REL_STACK,
+
+	F_STRUCT(
+		__field(	int,		size	)
+		__stack_array(	u64,	caller,
+					FTRACE_STACK_ENTRIES, size)
+	),
+
+	F_printk("\t=> %ps\n\t=> %ps\n\t=> %ps\n"
+		 "\t=> %ps\n\t=> %ps\n\t=> %ps\n"
+		 "\t=> %ps\n\t=> %ps\n",
+		 (void *)__entry->caller[0], (void *)__entry->caller[1],
+		 (void *)__entry->caller[2], (void *)__entry->caller[3],
+		 (void *)__entry->caller[4], (void *)__entry->caller[5],
+		 (void *)__entry->caller[6], (void *)__entry->caller[7])
+);
+
 FTRACE_ENTRY(user_stack, userstack_entry,
 
 	TRACE_USER_STACK,

@@ -55,6 +55,7 @@ enum trace_type {
 	TRACE_TIMERLAT,
 	TRACE_RAW_DATA,
 	TRACE_FUNC_REPEATS,
+	TRACE_REL_STACK,
 
 	__TRACE_LAST_TYPE,
 };
@@ -511,6 +512,7 @@ extern void __ftrace_bad_type(void);
 		IF_ASSIGN(var, ent, struct ftrace_entry, TRACE_FN);	\
 		IF_ASSIGN(var, ent, struct ctx_switch_entry, 0);	\
 		IF_ASSIGN(var, ent, struct stack_entry, TRACE_STACK);	\
+		IF_ASSIGN(var, ent, struct rel_stack_entry, TRACE_REL_STACK);\
 		IF_ASSIGN(var, ent, struct userstack_entry, TRACE_USER_STACK);\
 		IF_ASSIGN(var, ent, struct print_entry, TRACE_PRINT);	\
 		IF_ASSIGN(var, ent, struct bprint_entry, TRACE_BPRINT);	\
@@ -1350,6 +1352,7 @@ extern int trace_get_user(struct trace_parser *parser, const char __user *ubuf,
 		C(TRACE_PRINTK,		"trace_printk_dest"),	\
 		C(PAUSE_ON_TRACE,	"pause-on-trace"),	\
 		C(HASH_PTR,		"hash-ptr"),	/* Print hashed pointer */ \
+		C(REL_STACK,	"relative-stacktrace"),	\
 		FUNCTION_FLAGS					\
 		FGRAPH_FLAGS					\
 		STACK_FLAGS					\
@@ -2205,5 +2208,6 @@ static inline int rv_init_interface(void)
  * So this value has no meaning.
  */
 #define FTRACE_TRAMPOLINE_MARKER  ((unsigned long) INT_MAX)
+#define FTRACE_UNKNOWN_MARKER  ((unsigned long) INT_MAX - 1)
 
 #endif /* _LINUX_KERNEL_TRACE_H */

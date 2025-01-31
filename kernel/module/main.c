@@ -3746,6 +3746,35 @@ struct module *__module_text_address(unsigned long addr)
 	return mod;
 }
 
+/**
+ * __module_build_id() - get the module whose build_id start with an array.
+ * @build_id: the first part of the build_id.
+ * @size: the size of @build_id.
+ * 
+ * Must be called with preempt disabled or module mutex held so that
+ * module doesn't get freed during this.
+ */
+struct module *__module_build_id(unsigned char *build_id, int size)
+{
+#ifdef CONFIG_MODULE_BUILD_ID
+	struct module *mod;
+
+	if (size < 0)
+		return NULL;
+
+	if (size > BUILD_ID_SIZE_MAX)
+		size = BUILD_ID_SIZE_MAX;
+
+	list_for_each_entry_rcu(mod, &modules, list) {
+		if (mod->state == MODULE_STATE_UNFORMED)
+			continue;
+		if (!memcmp(mod->build_id, build_id, size))
+			return mod;
+	}
+#endif
+	return NULL;
+}
+
 /* Don't grab lock, we're oopsing. */
 void print_modules(void)
 {

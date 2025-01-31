@@ -224,7 +224,7 @@ void add_kallsyms(struct module *mod, const struct load_info *info)
 	mod->core_kallsyms.num_symtab = ndst;
 }
 
-#if IS_ENABLED(CONFIG_STACKTRACE_BUILD_ID)
+#if IS_ENABLED(CONFIG_MODULE_BUILD_ID)
 void init_build_id(struct module *mod, const struct load_info *info)
 {
 	const Elf_Shdr *sechdr;
@@ -338,7 +338,7 @@ int module_address_lookup(unsigned long addr,
 		if (modname)
 			*modname = mod->name;
 		if (modbuildid) {
-#if IS_ENABLED(CONFIG_STACKTRACE_BUILD_ID)
+#if IS_ENABLED(CONFIG_MODULE_BUILD_ID)
 			*modbuildid = mod->build_id;
 #else
 			*modbuildid = NULL;

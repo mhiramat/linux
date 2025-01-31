@@ -1281,6 +1281,66 @@ static struct trace_event trace_stack_event = {
 	.funcs		= &trace_stack_funcs,
 };
 
+/* TRACE_REL_STACK */
+
+
+static enum print_line_t trace_rel_stack_print(struct trace_iterator *iter,
+					   int flags, struct trace_event *event)
+{
+	struct ftrace_rel_caller *p;
+	struct rel_stack_entry *field;
+	struct trace_seq *s = &iter->seq;
+	unsigned long delta = 0;
+	struct module *mod;
+
+	trace_assign_type(field, iter->ent);
+
+	trace_seq_puts(s, "<stack trace> [relative]\n");
+
+	for (int i = 0; i < field->size; i++) {
+		p = (struct ftrace_rel_caller *)&field->caller[i];
+
+		if (trace_seq_has_overflowed(s))
+			break;
+
+		trace_seq_puts(s, " => ");
+		if (p->offset == FTRACE_TRAMPOLINE_MARKER) {
+			trace_seq_puts(s, "[FTRACE TRAMPOLINE]\n");
+			continue;
+		} else if (p->offset == FTRACE_UNKNOWN_MARKER) {
+			trace_seq_puts(s, "[TRACE UNKNOWN]\n");
+			continue;
+		}
+		if (p->hash) {
+			unsigned char hash[4];
+
+			guard(rcu)();
+			*(unsigned int *)hash = p->hash;
+			mod = __module_build_id(hash, 4);
+			if (!mod) {
+				trace_seq_printf(s, "%x [REMOVED %02x%02x%02x%02x]\n",
+						p->offset, hash[0], hash[1], hash[2], hash[3]);
+				continue;
+			}
+			delta = (unsigned long)mod->mem[MOD_TEXT].base;
+		} else
+			delta = (unsigned long)_stext;
+		seq_print_ip_sym(s, (unsigned long)p->offset + delta, flags);
+		trace_seq_putc(s, '\n');
+	}
+
+	return trace_handle_return(s);
+}
+
+static struct trace_event_functions trace_rel_stack_funcs = {
+	.trace		= trace_rel_stack_print,
+};
+
+static struct trace_event trace_rel_stack_event = {
+	.type		= TRACE_REL_STACK,
+	.funcs		= &trace_rel_stack_funcs,
+};
+
 /* TRACE_USER_STACK */
 static enum print_line_t trace_user_stack_print(struct trace_iterator *iter,
 						int flags, struct trace_event *event)
@@ -1724,6 +1784,7 @@ static struct trace_event *events[] __initdata = {
 	&trace_ctx_event,
 	&trace_wake_event,
 	&trace_stack_event,
+	&trace_rel_stack_event,
 	&trace_user_stack_event,
 	&trace_bputs_event,
 	&trace_bprint_event,

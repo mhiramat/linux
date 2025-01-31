@@ -416,7 +416,7 @@ struct module {
 	/* Unique handle for this module */
 	char name[MODULE_NAME_LEN];
 
-#ifdef CONFIG_STACKTRACE_BUILD_ID
+#ifdef CONFIG_MODULE_BUILD_ID
 	/* Module build ID */
 	unsigned char build_id[BUILD_ID_SIZE_MAX];
 #endif
@@ -622,6 +622,7 @@ static inline bool module_is_coming(struct module *mod)
 
 struct module *__module_text_address(unsigned long addr);
 struct module *__module_address(unsigned long addr);
+struct module *__module_build_id(unsigned char *build_id, int size);
 bool is_module_address(unsigned long addr);
 bool __is_module_percpu_address(unsigned long addr, unsigned long *can_addr);
 bool is_module_percpu_address(unsigned long addr);
@@ -787,6 +788,11 @@ static inline struct module *__module_address(unsigned long addr)
 }
 
 static inline struct module *__module_text_address(unsigned long addr)
+{
+	return NULL;
+}
+
+static inline struct module *__module_build_id(unsigned char *build_id, int size)
 {
 	return NULL;
 }

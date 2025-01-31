@@ -26,6 +26,9 @@ if MODULES
 config MODULE_DEBUGFS
 	bool
 
+config MODULE_BUILD_ID
+	bool
+
 config MODULE_DEBUG
 	bool "Module debugging"
 	depends on DEBUG_FS

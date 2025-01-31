@@ -2916,16 +2916,39 @@ struct ftrace_stacks {
 static DEFINE_PER_CPU(struct ftrace_stacks, ftrace_stacks);
 static DEFINE_PER_CPU(int, ftrace_stack_reserve);
 
+static void record_as_offset(struct ftrace_rel_caller *caller, unsigned long addr)
+{
+	if (kernel_text_address(addr)) {
+		caller->hash = 0;
+		caller->offset = (unsigned int)(addr - (unsigned long)_stext);
+	} else if (addr == FTRACE_TRAMPOLINE_MARKER) {
+		caller->hash = 0;
+		caller->offset = (unsigned int)FTRACE_TRAMPOLINE_MARKER;
+	} else {
+		struct module *mod = __module_text_address(addr);
+		if (mod) {
+			unsigned long base = (unsigned long)mod->mem[MOD_TEXT].base;
+			caller->offset = (unsigned int)(addr - base);
+			caller->hash = *(unsigned int *)mod->build_id;
+		} else {
+			caller->hash = 0;
+			caller->offset = (unsigned int)FTRACE_UNKNOWN_MARKER;
+		}
+	}
+}
+
 static void __ftrace_trace_stack(struct trace_array *tr,
 				 struct trace_buffer *buffer,
 				 unsigned int trace_ctx,
 				 int skip, struct pt_regs *regs)
 {
+	struct rel_stack_entry *rel_entry;
 	struct ring_buffer_event *event;
 	unsigned int size, nr_entries;
 	struct ftrace_stack *fstack;
 	struct stack_entry *entry;
 	int stackidx;
+	int type;
 
 	/*
 	 * Add one, for this function and the call to save_stack_trace()
@@ -2937,6 +2960,7 @@ static void __ftrace_trace_stack(struct trace_array *tr,
 #endif
 
 	preempt_disable_notrace();
+	type = (tr->trace_flags & TRACE_ITER_REL_STACK_BIT) ? TRACE_REL_STACK : TRACE_STACK;
 
 	stackidx = __this_cpu_inc_return(ftrace_stack_reserve) - 1;
 
@@ -2977,16 +3001,28 @@ static void __ftrace_trace_stack(struct trace_array *tr,
 	}
 #endif
 
-	event = __trace_buffer_lock_reserve(buffer, TRACE_STACK,
-				    struct_size(entry, caller, nr_entries),
+	if (type == TRACE_REL_STACK)
+		size = struct_size(rel_entry, caller, nr_entries);
+	else
+		size = struct_size(entry, caller, nr_entries);
+
+	event = __trace_buffer_lock_reserve(buffer, type, size,
 				    trace_ctx);
 	if (!event)
 		goto out;
-	entry = ring_buffer_event_data(event);
 
-	entry->size = nr_entries;
-	memcpy(&entry->caller, fstack->calls,
+	if (type == TRACE_REL_STACK) {
+		rel_entry = ring_buffer_event_data(event);
+		rel_entry->size = nr_entries;
+		for (int i = 0; i < nr_entries; i++)
+			record_as_offset((struct ftrace_rel_caller *)&rel_entry->caller[i],
+					fstack->calls[i]);
+	} else {
+		entry = ring_buffer_event_data(event);
+		entry->size = nr_entries;
+		memcpy(&entry->caller, fstack->calls,
 	       flex_array_size(entry, caller, nr_entries));
+	}
 
 	__buffer_unlock_commit(buffer, event);
 
