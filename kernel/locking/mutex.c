@@ -61,6 +61,13 @@ static inline struct task_struct *__owner_task(unsigned long owner)
 	return (struct task_struct *)(owner & ~MUTEX_FLAGS);
 }
 
+struct task_struct *mutex_owner_task(struct mutex *lock)
+{
+	unsigned long owner = atomic_long_read(&lock->owner);
+
+	return __owner_task(owner);
+}
+
 bool mutex_is_locked(struct mutex *lock)
 {
 	return __mutex_owner(lock) != NULL;
@@ -627,6 +634,9 @@ __mutex_lock_common(struct mutex *lock, unsigned int state, unsigned int subclas
 			goto err_early_kill;
 	}
 
+#ifdef CONFIG_DETECT_HUNG_TASK
+	current->hang_on_mutex = lock;
+#endif
 	set_current_state(state);
 	trace_contention_begin(lock, LCB_F_MUTEX);
 	for (;;) {
@@ -684,6 +694,9 @@ __mutex_lock_common(struct mutex *lock, unsigned int state, unsigned int subclas
 	raw_spin_lock_irqsave(&lock->wait_lock, flags);
 acquired:
 	__set_current_state(TASK_RUNNING);
+#ifdef CONFIG_DETECT_HUNG_TASK
+	current->hang_on_mutex = NULL;
+#endif
 
 	if (ww_ctx) {
 		/*
@@ -712,6 +725,9 @@ skip_wait:
 	return 0;
 
 err:
+#ifdef CONFIG_DETECT_HUNG_TASK
+	current->hang_on_mutex = NULL;
+#endif
 	__set_current_state(TASK_RUNNING);
 	__mutex_remove_waiter(lock, &waiter);
 err_early_kill:

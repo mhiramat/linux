@@ -93,6 +93,44 @@ static struct notifier_block panic_block = {
 	.notifier_call = hung_task_panic,
 };
 
+#define MAX_MUTEX_OWNERS	64
+static struct task_struct *mutex_owners[MAX_MUTEX_OWNERS];
+static int nr_mutex_owners;
+
+static void add_mutex_owner(struct mutex *lock)
+{
+	struct task_struct *owner;
+	int i;
+
+	if (!lock)
+		return;
+
+	owner = mutex_owner_task(lock);
+	if (!owner)
+		return;
+
+	for (i = 0; i < nr_mutex_owners; i++)
+		if (mutex_owners[i] == owner)
+			return;
+
+	if (i == MAX_MUTEX_OWNERS)
+		return;
+
+	mutex_owners[i] = (struct task_struct *)owner;
+	nr_mutex_owners++;
+}
+
+static bool is_mutex_owner(struct task_struct *t)
+{
+	int i;
+
+	for (i = 0; i < nr_mutex_owners; i++)
+		if (mutex_owners[i] == t)
+			return true;
+
+	return false;
+}
+
 static void check_hung_task(struct task_struct *t, unsigned long timeout)
 {
 	unsigned long switch_count = t->nvcsw + t->nivcsw;
@@ -152,6 +190,7 @@ static void check_hung_task(struct task_struct *t, unsigned long timeout)
 		pr_err("\"echo 0 > /proc/sys/kernel/hung_task_timeout_secs\""
 			" disables this message.\n");
 		sched_show_task(t);
+		add_mutex_owner(t->hang_on_mutex);
 		hung_task_show_lock = true;
 
 		if (sysctl_hung_task_all_cpu_backtrace)
@@ -186,6 +225,21 @@ static bool rcu_lock_break(struct task_struct *g, struct task_struct *t)
 	return can_cont;
 }
 
+static void show_hang_on_mutex_owners(void)
+{
+	struct task_struct *g, *t;
+
+	guard(rcu)();
+	for_each_process_thread(g, t) {
+		if (!is_mutex_owner(t))
+			continue;
+
+		pr_err("INFO: task %s:%d holds a mutex and sleep.\n",
+		       t->comm, t->pid);
+		sched_show_task(t);
+	}
+}
+
 /*
  * Check whether a TASK_UNINTERRUPTIBLE does not get woken up for
  * a really long time (120 seconds). If that happens, print out
@@ -204,6 +258,7 @@ static void check_hung_uninterruptible_tasks(unsigned long timeout)
 	if (test_taint(TAINT_DIE) || did_panic)
 		return;
 
+	nr_mutex_owners = 0;
 	hung_task_show_lock = false;
 	rcu_read_lock();
 	for_each_process_thread(g, t) {
@@ -227,6 +282,7 @@ static void check_hung_uninterruptible_tasks(unsigned long timeout)
 			check_hung_task(t, timeout);
 	}
  unlock:
+	show_hang_on_mutex_owners();
 	rcu_read_unlock();
 	if (hung_task_show_lock)
 		debug_show_all_locks();
