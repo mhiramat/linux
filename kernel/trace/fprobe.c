@@ -486,6 +486,24 @@ static int ip_list_from_filter(const char *filter, const char *notfilter,
 	return match.index ?: -ENOENT;
 }
 
+#define FPROBE_IPS_MAX	INT_MAX
+
+int fprobe_alloc_ip_list_from_filter(const char *filter, const char *notfilter,
+				     unsigned long **addrs)
+{
+	int ret;
+
+	/* Count the number of ips from filter. */
+	ret = ip_list_from_filter(filter, notfilter, NULL, FPROBE_IPS_MAX);
+	if (ret < 0)
+		return ret;
+
+	*addrs = kcalloc(ret, sizeof(unsigned long), GFP_KERNEL);
+	if (!*addrs)
+		return -ENOMEM;
+	return ip_list_from_filter(filter, notfilter, *addrs, ret);
+}
+
 static void fprobe_fail_cleanup(struct fprobe *fp)
 {
 	kfree(fp->hlist_array);
@@ -528,8 +546,6 @@ static int fprobe_init(struct fprobe *fp, unsigned long *addrs, int num)
 	return 0;
 }
 
-#define FPROBE_IPS_MAX	INT_MAX
-
 /**
  * register_fprobe() - Register fprobe to ftrace by pattern.
  * @fp: A fprobe data structure to be registered.
@@ -549,14 +565,7 @@ int register_fprobe(struct fprobe *fp, const char *filter, const char *notfilter
 	if (!fp || !filter)
 		return -EINVAL;
 
-	ret = ip_list_from_filter(filter, notfilter, NULL, FPROBE_IPS_MAX);
-	if (ret < 0)
-		return ret;
-
-	addrs = kcalloc(ret, sizeof(unsigned long), GFP_KERNEL);
-	if (!addrs)
-		return -ENOMEM;
-	ret = ip_list_from_filter(filter, notfilter, addrs, ret);
+	ret = fprobe_alloc_ip_list_from_filter(filter, notfilter, &addrs);
 	if (ret > 0)
 		ret = register_fprobe_ips(fp, addrs, ret);
 

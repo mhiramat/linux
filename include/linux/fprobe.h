@@ -94,6 +94,8 @@ int register_fprobe_ips(struct fprobe *fp, unsigned long *addrs, int num);
 int register_fprobe_syms(struct fprobe *fp, const char **syms, int num);
 int unregister_fprobe(struct fprobe *fp);
 bool fprobe_is_registered(struct fprobe *fp);
+int fprobe_alloc_ip_list_from_filter(const char *filter, const char *notfilter,
+	unsigned long **addrs);
 #else
 static inline int register_fprobe(struct fprobe *fp, const char *filter, const char *notfilter)
 {
@@ -114,6 +116,12 @@ static inline int unregister_fprobe(struct fprobe *fp)
 static inline bool fprobe_is_registered(struct fprobe *fp)
 {
 	return false;
+}
+static inline int fprobe_alloc_ip_list_from_filter(const char *filter,
+						   const char *notfilter,
+						   unsigned long **addrs)
+{
+	return -EOPNOTSUPP;
 }
 #endif
 
