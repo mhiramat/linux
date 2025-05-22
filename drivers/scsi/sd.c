@@ -58,6 +58,7 @@
 #include <linux/t10-pi.h>
 #include <linux/uaccess.h>
 #include <linux/unaligned.h>
+#include <linux/hung_task.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
@@ -1526,8 +1527,11 @@ static int sd_open(struct gendisk *disk, blk_mode_t mode)
 	if (!scsi_block_when_processing_errors(sdev))
 		goto error_out;
 
-	if (sd_need_revalidate(disk, sdkp))
-		sd_revalidate_disk(disk);
+	if (sd_need_revalidate(disk, sdkp)) {
+		retval = sd_revalidate_disk(disk);
+		if (retval == -ETIMEDOUT)
+			return retval;
+	}
 
 	/*
 	 * If the drive is empty, just let the open fail.
@@ -2385,15 +2389,30 @@ static int sd_done(struct scsi_cmnd *SCpnt)
 	return good_bytes;
 }
 
+static int sd_max_retries_in_budget(int orig_retry)
+{
+	unsigned long timeout = hung_task_timeout_budget();
+
+	/* No limit */
+	if (timeout == ULONG_MAX)
+		return orig_retry;
+
+	/* No time to send command. */
+	if (timeout < SD_TIMEOUT)
+		return -1;
+
+	return (timeout - SD_TIMEOUT) / SD_TIMEOUT;
+}
+
 /*
  * spinup disk - called only in sd_revalidate_disk()
  */
-static void
+static int
 sd_spinup_disk(struct scsi_disk *sdkp)
 {
 	static const u8 cmd[10] = { TEST_UNIT_READY };
 	unsigned long spintime_expire = 0;
-	int spintime, sense_valid = 0;
+	int spintime, retries, sense_valid = 0;
 	unsigned int the_result;
 	struct scsi_sense_hdr sshdr;
 	struct scsi_failure failure_defs[] = {
@@ -2434,9 +2453,15 @@ sd_spinup_disk(struct scsi_disk *sdkp)
 
 		scsi_failures_reset_retries(&failures);
 
+		retries = sd_max_retries_in_budget(sdkp->max_retries);
+		if (retries < 0) {
+			/* Exceeds the timeout budget */
+			return -ETIMEDOUT;
+		}
+
 		the_result = scsi_execute_cmd(sdkp->device, cmd, REQ_OP_DRV_IN,
 					      NULL, 0, SD_TIMEOUT,
-					      sdkp->max_retries, &exec_args);
+					      retries, &exec_args);
 
 
 		if (the_result > 0) {
@@ -2449,7 +2474,7 @@ sd_spinup_disk(struct scsi_disk *sdkp)
 				if (media_was_present)
 					sd_printk(KERN_NOTICE, sdkp,
 						  "Media removed, stopped polling\n");
-				return;
+				return -ENODEV;
 			}
 			sense_valid = scsi_sense_valid(&sshdr);
 		}
@@ -2495,10 +2520,16 @@ sd_spinup_disk(struct scsi_disk *sdkp)
 						0x11 : 1,
 				};
 
+				retries = sd_max_retries_in_budget(sdkp->max_retries);
+				if (retries < 0) {
+					/* Exceeds the timeout budget */
+					return -ETIMEDOUT;
+				}
+
 				sd_printk(KERN_NOTICE, sdkp, "Spinning up disk...");
 				scsi_execute_cmd(sdkp->device, start_cmd,
 						 REQ_OP_DRV_IN, NULL, 0,
-						 SD_TIMEOUT, sdkp->max_retries,
+						 SD_TIMEOUT, retries,
 						 &exec_args);
 				spintime_expire = jiffies + 100 * HZ;
 				spintime = 1;
@@ -2539,6 +2570,7 @@ sd_spinup_disk(struct scsi_disk *sdkp)
 		else
 			printk(KERN_CONT "not responding...\n");
 	}
+	return 0;
 }
 
 /*
@@ -2624,7 +2656,7 @@ static void read_capacity_error(struct scsi_disk *sdkp, struct scsi_device *sdp,
 #define READ_CAPACITY_RETRIES_ON_RESET	10
 
 static int read_capacity_16(struct scsi_disk *sdkp, struct scsi_device *sdp,
-		struct queue_limits *lim, unsigned char *buffer)
+			    struct queue_limits *lim, unsigned char *buffer)
 {
 	unsigned char cmd[16];
 	struct scsi_sense_hdr sshdr;
@@ -2642,6 +2674,11 @@ static int read_capacity_16(struct scsi_disk *sdkp, struct scsi_device *sdp,
 		return -EINVAL;
 
 	do {
+		int max_retries = sd_max_retries_in_budget(sdkp->max_retries);
+
+		if (max_retries < 0)
+			return -ETIMEDOUT;
+
 		memset(cmd, 0, 16);
 		cmd[0] = SERVICE_ACTION_IN_16;
 		cmd[1] = SAI_READ_CAPACITY_16;
@@ -2650,7 +2687,7 @@ static int read_capacity_16(struct scsi_disk *sdkp, struct scsi_device *sdp,
 
 		the_result = scsi_execute_cmd(sdp, cmd, REQ_OP_DRV_IN,
 					      buffer, RC16_LEN, SD_TIMEOUT,
-					      sdkp->max_retries, &exec_args);
+					      max_retries, &exec_args);
 		if (the_result > 0) {
 			if (media_not_present(sdkp, &sshdr))
 				return -ENODEV;
@@ -2756,11 +2793,15 @@ static int read_capacity_10(struct scsi_disk *sdkp, struct scsi_device *sdp,
 	int the_result;
 	sector_t lba;
 	unsigned sector_size;
+	int max_retries = sd_max_retries_in_budget(sdkp->max_retries);
+
+	if (max_retries < 0)
+		return -ETIMEDOUT;
 
 	memset(buffer, 0, 8);
 
 	the_result = scsi_execute_cmd(sdp, cmd, REQ_OP_DRV_IN, buffer,
-				      8, SD_TIMEOUT, sdkp->max_retries,
+				      8, SD_TIMEOUT, max_retries,
 				      &exec_args);
 
 	if (the_result > 0) {
@@ -2809,7 +2850,7 @@ static int sd_try_rc16_first(struct scsi_device *sdp)
 /*
  * read disk capacity
  */
-static void
+static int
 sd_read_capacity(struct scsi_disk *sdkp, struct queue_limits *lim,
 		unsigned char *buffer)
 {
@@ -2821,17 +2862,17 @@ sd_read_capacity(struct scsi_disk *sdkp, struct queue_limits *lim,
 		if (sector_size == -EOVERFLOW)
 			goto got_data;
 		if (sector_size == -ENODEV)
-			return;
+			return -ENODEV;
 		if (sector_size < 0)
 			sector_size = read_capacity_10(sdkp, sdp, buffer);
 		if (sector_size < 0)
-			return;
+			return sector_size;
 	} else {
 		sector_size = read_capacity_10(sdkp, sdp, buffer);
 		if (sector_size == -EOVERFLOW)
 			goto got_data;
 		if (sector_size < 0)
-			return;
+			return sector_size;
 		if ((sizeof(sdkp->capacity) > 4) &&
 		    (sdkp->capacity > 0xffffffffULL)) {
 			int old_sector_size = sector_size;
@@ -2903,6 +2944,7 @@ got_data:
 	if (sdkp->capacity > 0xffffffff)
 		sdp->use_16_for_rw = 1;
 
+	return 0;
 }
 
 /*
@@ -3718,7 +3760,14 @@ static int sd_revalidate_disk(struct gendisk *disk)
 		goto out;
 	}
 
-	sd_spinup_disk(sdkp);
+	err = sd_spinup_disk(sdkp);
+	if (err) {
+		sd_printk(KERN_WARNING, sdkp, "sd_revalidate_disk: %s.\n",
+			  err == -ETIMEDOUT ? "Exceeded hung check deadline"
+			  : "Failed to spin up a disk");
+		kfree(buffer);
+		return err;
+	}
 
 	lim = queue_limits_start_update(sdkp->disk->queue);
 
@@ -3727,7 +3776,15 @@ static int sd_revalidate_disk(struct gendisk *disk)
 	 * react badly if we do.
 	 */
 	if (sdkp->media_present) {
-		sd_read_capacity(sdkp, &lim, buffer);
+		err = sd_read_capacity(sdkp, &lim, buffer);
+		if (err < 0) {
+			sd_printk(KERN_WARNING, sdkp, "sd_revalidate_disk: %s.\n",
+				  err == -ETIMEDOUT ? "Exceeded hung check deadline"
+				  : "Failed to read disk capacity");
+			kfree(buffer);
+			return err;
+		}
+
 		/*
 		 * Some USB/UAS devices return generic values for mode pages
 		 * until the media has been accessed. Trigger a READ operation
@@ -4001,7 +4058,12 @@ static int sd_probe(struct device *dev)
 	sdkp->first_scan = 1;
 	sdkp->max_medium_access_timeouts = SD_MAX_MEDIUM_TIMEOUTS;
 
-	sd_revalidate_disk(gd);
+	error = sd_revalidate_disk(gd);
+	if (error) {
+		device_unregister(&sdkp->disk_dev);
+		put_disk(gd);
+		goto out;
+	}
 
 	if (sdp->removable) {
 		gd->flags |= GENHD_FL_REMOVABLE;
