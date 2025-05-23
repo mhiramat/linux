@@ -29,6 +29,7 @@
 #include <linux/interrupt.h>
 #include <linux/debug_locks.h>
 #include <linux/osq_lock.h>
+#include <linux/hung_task.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/lock.h>
@@ -153,8 +154,10 @@ static __always_inline bool __mutex_trylock_fast(struct mutex *lock)
 
 	MUTEX_WARN_ON(lock->magic != lock);
 
-	if (atomic_long_try_cmpxchg_acquire(&lock->owner, &zero, curr))
+	if (atomic_long_try_cmpxchg_acquire(&lock->owner, &zero, curr)) {
+		hung_task_acquire_lock(lock);
 		return true;
+	}
 
 	return false;
 }
@@ -532,6 +535,7 @@ static noinline void __sched __mutex_unlock_slowpath(struct mutex *lock, unsigne
  */
 void __sched mutex_unlock(struct mutex *lock)
 {
+	hung_task_release_lock(lock);
 #ifndef CONFIG_DEBUG_LOCK_ALLOC
 	if (__mutex_unlock_fast(lock))
 		return;
@@ -719,6 +723,7 @@ skip_wait:
 	/* got the lock - cleanup and rejoice! */
 	lock_acquired(&lock->dep_map, ip);
 	trace_contention_end(lock, 0);
+	hung_task_acquire_lock(lock);
 
 	if (ww_ctx)
 		ww_mutex_lock_acquired(ww, ww_ctx);
@@ -1083,8 +1088,10 @@ int __sched mutex_trylock(struct mutex *lock)
 	MUTEX_WARN_ON(lock->magic != lock);
 
 	locked = __mutex_trylock(lock);
-	if (locked)
+	if (locked) {
 		mutex_acquire(&lock->dep_map, 0, 1, _RET_IP_);
+		hung_task_acquire_lock(lock);
+	}
 
 	return locked;
 }

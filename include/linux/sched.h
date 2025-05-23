@@ -1175,6 +1175,11 @@ struct task_struct {
 #ifdef CONFIG_DETECT_HUNG_TASK
 	unsigned long			last_switch_count;
 	unsigned long			last_switch_time;
+
+	/* The time in jiffies when the first lock is acquired: */
+	unsigned long			first_lock_time;
+	/* The address of the first lock: */
+	unsigned long			first_lock_addr;
 #endif
 	/* Filesystem information: */
 	struct fs_struct		*fs;
