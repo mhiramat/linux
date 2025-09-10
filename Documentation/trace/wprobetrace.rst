@@ -73,10 +73,13 @@ Combination with trigger action
 The event trigger action can extend the utilization of this wprobe.
 
 - set_wprobe:WPEVENT:FIELD[+|-ADJUST]
-- clear_wprobe:WPEVENT
+- clear_wprobe:WPEVENT[:FIELD[+|-]ADJUST]
 
 Set these triggers to the target event, then the WPROBE event will be
 setup to trace the memory access at FIELD[+|-ADJUST] address.
+When clear_wprobe is hit, if FIELD is NOT specified, the WPEVENT is
+forcibly cleared. If FIELD[[+|-]ADJUST] is set, it clears WPEVENT only
+if its watching address is the same as the FIELD[[+|-]ADJUST] value.
 
 For example, trace the first 8 byte of the dentry data structure passed
 to do_truncate() until it is deleted by __dentry_kill().
@@ -88,7 +91,7 @@ to do_truncate() until it is deleted by __dentry_kill().
   # echo 'set_wprobe:watch:dentry' >> events/fprobes/truncate/trigger
 
   # echo 'f:dentry_kill __dentry_kill dentry=$arg1' >> dynamic_events
-  # echo 'clear_wprobe:watch' >> events/fprobes/dentry_kill/trigger
+  # echo 'clear_wprobe:watch:dentry' >> events/fprobes/dentry_kill/trigger
 
   # echo 1 >> events/fprobes/truncate/enable
   # echo 1 >> events/fprobes/dentry_kill/enable

@@ -762,6 +762,8 @@ static void wprobe_trigger(struct event_trigger_data *data,
 	} else {
 		if (tw->addr == WPROBE_DEFAULT_CLEAR_ADDRESS)
 			goto unlock;
+		if (wprobe_data->field && tw->addr != addr)
+			goto unlock;
 
 		tw->addr = attr->bp_addr = WPROBE_DEFAULT_CLEAR_ADDRESS;
 		ret = trace_wprobe_update_local(tw, attr);
@@ -788,10 +790,14 @@ static int wprobe_trigger_print(struct seq_file *m,
 {
 	struct wprobe_trigger_data *wprobe_data = data->private_data;
 
-	if (wprobe_data->clear)
+	if (wprobe_data->clear) {
 		seq_printf(m, "%s:%s", CLEAR_WPROBE_STR,
 			   trace_event_name(wprobe_data->file->event_call));
-	else
+		if (wprobe_data->field) {
+			seq_printf(m, ":%s%+ld",
+				   wprobe_data->field, wprobe_data->adjust);
+		}
+	} else
 		seq_printf(m, "%s:%s:%s%+ld", SET_WPROBE_STR,
 			   trace_event_name(wprobe_data->file->event_call),
 			   wprobe_data->field, wprobe_data->adjust);
@@ -869,7 +875,7 @@ static int wprobe_trigger_cmd_parse(struct event_command *cmd_ops,
 {
 	/*
 	 * set_wprobe:EVENT:FIELD[+OFFS]
-	 * clear_wprobe:EVENT
+	 * clear_wprobe:EVENT[:FIELD[+OFFS]]
 	 */
 	struct wprobe_trigger_data *wprobe_data __free(free_wprobe_trigger_data) = NULL;
 	struct event_trigger_data *trigger_data __free(kfree) = NULL;
@@ -915,13 +921,14 @@ static int wprobe_trigger_cmd_parse(struct event_command *cmd_ops,
 		return -ENOMEM;
 	attr = &wprobe_data->attr;
 
-	if (!clear) {
-		char *offs;
+	/* Find target field, which must be equivarent to "void *" */
+	field_str = strsep(&param, ":");
+	/* trigger removing or clear_wprobe does not need field. */
+	if (!remove && !clear && !field_str)
+		return -EINVAL;
 
-		/* Find target field, which must be equivarent to "void *" */
-		field_str = strsep(&param, ":");
-		if (!field_str)
-			return -EINVAL;
+	if (field_str) {
+		char *offs;
 
 		offs = strpbrk(field_str, "+-");
 		if (offs) {
