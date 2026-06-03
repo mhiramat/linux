@@ -1390,26 +1390,31 @@ parse_probe_arg(char *arg, const struct fetch_type *type,
 
 	case '+':	/* deref memory */
 	case '-':
-		if (arg[1] == 'u') {
-			deref = FETCH_OP_UDEREF;
-			arg[1] = arg[0];
-			arg++;
+		if (memcmp(arg, "+CPU(", 5) == 0) {
+			deref = FETCH_OP_DEREF_CPU;
+			arg += 4;
+		} else {
+			if (arg[1] == 'u') {
+				deref = FETCH_OP_UDEREF;
+				arg[1] = arg[0];
+				arg++;
+			}
+			if (arg[0] == '+')
+				arg++;	/* Skip '+', because kstrtol() rejects it. */
+			tmp = strchr(arg, '(');
+			if (!tmp) {
+				trace_probe_log_err(ctx->offset, DEREF_NEED_BRACE);
+				return -EINVAL;
+			}
+			*tmp = '\0';
+			ret = kstrtol(arg, 0, &offset);
+			if (ret) {
+				trace_probe_log_err(ctx->offset, BAD_DEREF_OFFS);
+				break;
+			}
+			ctx->offset += (tmp + 1 - arg) + (arg[0] != '-' ? 1 : 0);
+			arg = tmp + 1;
 		}
-		if (arg[0] == '+')
-			arg++;	/* Skip '+', because kstrtol() rejects it. */
-		tmp = strchr(arg, '(');
-		if (!tmp) {
-			trace_probe_log_err(ctx->offset, DEREF_NEED_BRACE);
-			return -EINVAL;
-		}
-		*tmp = '\0';
-		ret = kstrtol(arg, 0, &offset);
-		if (ret) {
-			trace_probe_log_err(ctx->offset, BAD_DEREF_OFFS);
-			break;
-		}
-		ctx->offset += (tmp + 1 - arg) + (arg[0] != '-' ? 1 : 0);
-		arg = tmp + 1;
 		tmp = strrchr(arg, ')');
 		if (!tmp) {
 			trace_probe_log_err(ctx->offset + strlen(arg),
