@@ -40,9 +40,11 @@
 #include "string2.h"
 #include "strbuf.h"
 #include "parse-events.h"
+#include "demangle-rust-v0.h"
 
 #include <subcmd/pager.h>
 #include <linux/ctype.h>
+#include <linux/log2.h>
 #include <linux/zalloc.h>
 
 #ifdef HAVE_DEBUGINFOD_SUPPORT
@@ -1563,13 +1565,37 @@ static int parse_perf_probe_point(char *arg, struct perf_probe_event *pev)
 	 * Otherwise, we consider arg to be a function specification.
 	 */
 	if (!strpbrk_esc(arg, "+@%")) {
-		ptr = strpbrk_esc(arg, ";:");
+		ptr = arg;
+		/*
+		 * Skip Rust scope operators ('::') so that demangled Rust symbol
+		 * names like 'kernel::print::pr_info' are not wrongly split by
+		 * the colon delimiter.
+		 */
+		while ((ptr = strpbrk_esc(ptr, ";:")) != NULL) {
+			if (*ptr == ':' && ptr[1] == ':') {
+				ptr += 2;
+				continue;
+			}
+			break;
+		}
 		/* This is a file spec if it includes a '.' before ; or : */
 		if (ptr && memchr(arg, '.', ptr - arg))
 			file_spec = true;
 	}
 
-	ptr = strpbrk_esq(arg, ";:+@%");
+	ptr = arg;
+	/*
+	 * Skip Rust scope operators ('::') to accept demangled Rust function names
+	 * containing '::' as a valid function specification instead of treating
+	 * the colon as a delimiter for line numbers or offsets.
+	 */
+	while ((ptr = strpbrk_esq(ptr, ";:+@%")) != NULL) {
+		if (*ptr == ':' && ptr[1] == ':') {
+			ptr += 2;
+			continue;
+		}
+		break;
+	}
 	if (ptr) {
 		nc = *ptr;
 		*ptr++ = '\0';
@@ -3047,6 +3073,54 @@ close_out:
 	return ret;
 }
 
+#define RUST_DEMANGLE_BUF_MAX_LEN	(1024 * 1024)
+#define RUST_DEMANGLE_BUF_STEP		32
+
+/*
+ * Demangle a Rust symbol name if it is mangled (e.g. '_RN...' or '_ZN...').
+ * Returns a dynamically allocated demangled string, or NULL if it fails or
+ * is not a known Rust mangled symbol. Caller must free the returned string.
+ */
+static char *demangle_rust_sym(const char *str)
+{
+	struct demangle rust_demangle = {
+		.style = DemangleStyleUnknown,
+	};
+	char *demangled = NULL;
+	char *tmp;
+	size_t buf_len;
+
+	if (!str || (str[0] != '_' || (str[1] != 'R' && str[1] != 'Z')))
+		return NULL;
+
+	rust_demangle_demangle(str, &rust_demangle);
+	if (rust_demangle_is_known(&rust_demangle)) {
+		if (rust_demangle.mangled_len == 0)
+			return NULL;
+
+		/*
+		 * Dynamically expand the buffer until the demangled string fits,
+		 * up to RUST_DEMANGLE_BUF_MAX_LEN.
+		 */
+		for (buf_len = roundup_pow_of_two(rust_demangle.mangled_len * 2);
+		     buf_len < RUST_DEMANGLE_BUF_MAX_LEN;
+		     buf_len += RUST_DEMANGLE_BUF_STEP) {
+			tmp = realloc(demangled, buf_len);
+
+			if (!tmp) {
+				free(demangled);
+				return NULL;
+			}
+			demangled = tmp;
+			if (rust_demangle_display_demangle(&rust_demangle, demangled, buf_len,
+							   /*alternate=*/true) == OverflowOk)
+				return demangled;
+		}
+		free(demangled);
+	}
+	return NULL;
+}
+
 static int find_probe_functions(struct map *map, char *name,
 				struct symbol **syms)
 {
@@ -3065,6 +3139,8 @@ static int find_probe_functions(struct map *map, char *name,
 		cut_version = false;
 
 	map__for_each_symbol(map, sym, tmp) {
+		bool matched = false;
+
 		norm = arch__normalize_symbol_name(sym->name);
 		if (!norm)
 			continue;
@@ -3081,6 +3157,16 @@ static int find_probe_functions(struct map *map, char *name,
 		}
 
 		if (strglobmatch(norm, name)) {
+			matched = true;
+		} else {
+			char *demangled = demangle_rust_sym(norm);
+
+			if (demangled && strglobmatch(demangled, name))
+				matched = true;
+			free(demangled);
+		}
+
+		if (matched) {
 			found++;
 			if (syms && found < probe_conf.max_probes)
 				syms[found - 1] = sym;
