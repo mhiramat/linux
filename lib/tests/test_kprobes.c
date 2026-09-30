@@ -384,6 +384,117 @@ static int kprobes_test_init(struct kunit *test)
 	return 0;
 }
 
+#if defined(CONFIG_OPTPROBES) && defined(CONFIG_X86)
+#include <linux/delay.h>
+
+static noinline notrace void optprobe_overlap_target(void)
+{
+	asm volatile (
+		"xorl %%eax, %%eax\n\t"
+		"xorl %%edx, %%edx\n\t"
+		"nop\n\t"
+		"nop\n\t"
+		: : : "eax", "edx", "memory"
+	);
+}
+
+static int kp_A_hit;
+static int kp_B_hit;
+static int kp_C_hit;
+
+static int kp_A_pre_handler(struct kprobe *p, struct pt_regs *regs)
+{
+	kp_A_hit++;
+	return 0;
+}
+
+static int kp_B_pre_handler(struct kprobe *p, struct pt_regs *regs)
+{
+	kp_B_hit++;
+	return 0;
+}
+
+static int kp_C_pre_handler(struct kprobe *p, struct pt_regs *regs)
+{
+	kp_C_hit++;
+	return 0;
+}
+
+static bool kprobe_is_optimized(struct kprobe *p)
+{
+	struct kprobe *ap;
+
+	guard(rcu)();
+	ap = get_kprobe(p->addr);
+	return ap && kprobe_optimized(ap);
+}
+
+static void test_optprobe_disarmed_overlap(struct kunit *test)
+{
+	struct kprobe kp_A = {
+		.symbol_name = "optprobe_overlap_target",
+		.pre_handler = kp_A_pre_handler,
+	};
+	struct kprobe kp_B = {
+		.pre_handler = kp_B_pre_handler,
+		.flags = KPROBE_FLAG_DISABLED,
+	};
+	struct kprobe kp_C = {
+		.pre_handler = kp_C_pre_handler,
+	};
+
+	kp_A_hit = 0;
+	kp_B_hit = 0;
+	kp_C_hit = 0;
+
+	/* 1. Register probe A and wait for it to be optimized */
+	KUNIT_ASSERT_EQ(test, 0, register_kprobe(&kp_A));
+
+	wait_for_kprobe_optimizer();
+
+	if (!kprobe_is_optimized(&kp_A)) {
+		unregister_kprobe(&kp_A);
+		kunit_skip(test, "Optprobes optimization is not active\n");
+		return;
+	}
+
+	/* 2. Register probe B at A+2 (disabled) */
+	kp_B.addr = (kprobe_opcode_t *)kp_A.addr + 2;
+	KUNIT_ASSERT_EQ(test, 0, register_kprobe(&kp_B));
+
+	/* Disabled probe B must not disrupt probe A's optimization */
+	KUNIT_EXPECT_TRUE(test, kprobe_is_optimized(&kp_A));
+
+	/* 3. Register probe C at A+4 (enabled) */
+	kp_C.addr = (kprobe_opcode_t *)kp_A.addr + 4;
+	KUNIT_ASSERT_EQ(test, 0, register_kprobe(&kp_C));
+
+	/*
+	 * CRITICAL CHECK:
+	 * Because probe C overlaps probe A's 5-byte relative jump, arming C
+	 * must force probe A to be unoptimized.
+	 *
+	 * Without the fix, get_optimized_kprobe() stopped at disabled probe B,
+	 * failed to find probe A, and left probe A optimized while C's INT3
+	 * clobbered the displacement of A's jump.
+	 */
+	KUNIT_EXPECT_FALSE_MSG(test, kprobe_is_optimized(&kp_A),
+			       "Probe A remained optimized despite overlapping probe C!");
+
+	/* 4. Trigger target function to verify safe execution without crash */
+	optprobe_overlap_target();
+
+	KUNIT_EXPECT_EQ(test, kp_A_hit, 1);
+	KUNIT_EXPECT_EQ(test, kp_B_hit, 0);
+	KUNIT_EXPECT_EQ(test, kp_C_hit, 1);
+
+	/* 5. Cleanup */
+	unregister_kprobe(&kp_C);
+	unregister_kprobe(&kp_B);
+	unregister_kprobe(&kp_A);
+}
+#endif
+
 static struct kunit_case kprobes_testcases[] = {
 	KUNIT_CASE(test_kprobe),
 	KUNIT_CASE(test_kprobes),
@@ -395,6 +506,9 @@ static struct kunit_case kprobes_testcases[] = {
 	KUNIT_CASE(test_stacktrace_on_kretprobe),
 	KUNIT_CASE(test_stacktrace_on_nested_kretprobe),
 #endif
+#endif
+#if defined(CONFIG_OPTPROBES) && defined(CONFIG_X86)
+	KUNIT_CASE(test_optprobe_disarmed_overlap),
 #endif
 	{}
 };
