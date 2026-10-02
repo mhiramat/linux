@@ -175,6 +175,10 @@ the "debug.kprobes_optimization" kernel parameter is set to 1 (see
 sysctl(8)), Kprobes tries to reduce probe-hit overhead by using a jump
 instruction instead of a breakpoint instruction at each probepoint.
 
+For architectural details, state machine transitions, and the
+multi-generational asynchronous optimizer design, see
+:doc:`optprobes-design`.
+
 Init a Kprobe
 ^^^^^^^^^^^^^
 

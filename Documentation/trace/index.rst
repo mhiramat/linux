@@ -34,6 +34,7 @@ the Linux kernel.
    ftrace-design
    ftrace-uses
    kprobes
+   optprobes-design
    kprobetrace
    fprobetrace
    eprobetrace
